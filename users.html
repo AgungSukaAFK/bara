@@ -29,7 +29,7 @@
                 </div>
                 <div class="flex items-center gap-2">
                     <button type="button" onclick="UsersModule.loadData()" class="btn bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs">⟳ Muat Ulang</button>
-                    <button type="button" onclick="UsersModule.openModal()" class="btn btn-primary text-xs">+ Undang Pengguna</button>
+                    <button type="button" onclick="UsersModule.openModal()" class="btn btn-primary text-xs">+ Tambah Pengguna</button>
                 </div>
             </div>
 
@@ -73,7 +73,7 @@
             <div class="flex justify-between items-center mb-5 pb-3 border-b border-white/10">
                 <div>
                     <span class="badge badge-teal mb-1">Pengelolaan Akun</span>
-                    <h3 id="adminUserModalTitle" class="text-lg font-black text-white m-0">Undang Pengguna Baru</h3>
+                    <h3 id="adminUserModalTitle" class="text-lg font-black text-white m-0">Tambah Pengguna Baru</h3>
                 </div>
                 <button type="button" onclick="UsersModule.closeModal()" class="text-slate-400 hover:text-white text-xl">✕</button>
             </div>
@@ -110,7 +110,7 @@
                     </div>
                 </div>
                 <div class="p-3 rounded-lg bg-teal-500/10 border border-teal-500/20 text-[11px] text-teal-300">
-                    Link undangan login dikirimkan ke email pengguna. Pengguna dapat membuat password saat menerima undangan.
+                    Password sementara dibuat otomatis dan ditampilkan setelah akun tersimpan. Berikan langsung ke pengguna.
                 </div>
                 <div class="flex justify-end gap-3 pt-3 border-t border-white/10">
                     <button type="button" onclick="UsersModule.closeModal()" class="btn btn-secondary">Batal</button>
@@ -165,7 +165,7 @@
     <script src="js/core.js?v=20261105-goa"></script>
     <script src="js/modules/upload.js?v=20261104-budget-ytd-range-fix"></script>
     <script src="js/layout.js?v=20261102-upload-preview-wide"></script>
-    <script src="js/modules/users.js"></script>
+    <script src="js/modules/users.js?v=20261105-no-email"></script>
     <script>
         document.addEventListener('DOMContentLoaded', async () => {
             await SmartBaraCore.init();

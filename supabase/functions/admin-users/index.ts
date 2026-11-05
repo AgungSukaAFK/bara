@@ -13,7 +13,6 @@ const jsonResponse = (body: Record<string, unknown>, status = 200) => new Respon
 
 const allowedRoles = new Set(["superadmin", "spv", "tim", "viewer"]);
 const defaultSuperadminEmail = "spv.ga@garudamart.com";
-const inviteRedirectUrl = "https://bara.lourdes.cloud/login.html?mode=recovery";
 const notMemberError = "Pengguna ini bukan anggota Smart BARA.";
 
 Deno.serve(async (request) => {
@@ -82,13 +81,19 @@ Deno.serve(async (request) => {
       const email = normalizeEmail(body.email);
       const role = normalizeRole(email, body.role);
       const metadata = buildUserMetadata(body);
-      const { data, error } = await supabase.auth.admin.inviteUserByEmail(email, { data: metadata, redirectTo: inviteRedirectUrl });
+      const password = String(body.password || "");
+      if (password.length < 8 || password.length > 128) {
+        return jsonResponse({ error: "Password harus memiliki 8 sampai 128 karakter." }, 400);
+      }
+      const { data, error } = await supabase.auth.admin.createUser({
+        email,
+        password,
+        email_confirm: true,
+        user_metadata: metadata,
+        app_metadata: { role },
+      });
       if (error) throw error;
 
-      const { error: roleError } = await supabase.auth.admin.updateUserById(data.user.id, {
-        app_metadata: { ...data.user.app_metadata, role },
-      });
-      if (roleError) throw roleError;
       const { error: memberError } = await supabase.from("smartbara_members").insert({ user_id: data.user.id, origin: "smartbara" });
       if (memberError) {
         await supabase.auth.admin.deleteUser(data.user.id);

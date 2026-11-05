@@ -255,8 +255,8 @@ window.UsersModule = (function() {
         document.getElementById('adminUserRole').value = user.role;
         renderDepartmentOptions(user.department);
 
-        document.getElementById('adminUserModalTitle').textContent = user.id ? 'Edit Pengguna' : 'Undang Pengguna Baru';
-        document.getElementById('adminUserSaveButton').textContent = user.id ? 'Simpan Perubahan' : 'Kirim Link Undangan';
+        document.getElementById('adminUserModalTitle').textContent = user.id ? 'Edit Pengguna' : 'Tambah Pengguna Baru';
+        document.getElementById('adminUserSaveButton').textContent = user.id ? 'Simpan Perubahan' : 'Buat Akun';
 
         modal.classList.remove('hidden');
         setTimeout(() => modal.classList.remove('opacity-0'), 10);
@@ -280,6 +280,18 @@ window.UsersModule = (function() {
         list.innerHTML = [...departments].sort().map(department =>
             `<option value="${SmartBaraFormatters.escapeHtml(department)}"></option>`
         ).join('');
+    }
+
+    function showCreatedUserPassword(userId, email, fullName, password) {
+        document.getElementById('resetPasswordUserId').value = userId || '';
+        document.getElementById('resetPasswordEmail').value = email;
+        document.getElementById('resetPasswordValue').value = password;
+        document.getElementById('resetPasswordStatus').textContent = `Akun ${fullName || email} dibuat. Berikan password sementara ini langsung ke pengguna.`;
+        const modal = document.getElementById('adminPasswordResetModal');
+        if (modal) {
+            modal.classList.remove('hidden');
+            setTimeout(() => modal.classList.remove('opacity-0'), 10);
+        }
     }
 
     async function saveUser(e) {
@@ -309,21 +321,24 @@ window.UsersModule = (function() {
         button.disabled = true;
         button.textContent = 'Menyimpan...';
         try {
-            await invokeAdminUsersAction({
+            const temporaryPassword = id ? '' : generateTemporaryPassword();
+            const created = await invokeAdminUsersAction({
                 action: id ? 'update' : 'create',
                 userId: id,
                 email,
                 fullName,
                 department,
                 position,
-                role
+                role,
+                ...(id ? {} : { password: temporaryPassword })
             });
             closeModal();
             const refreshed = await loadData();
+            if (!id) showCreatedUserPassword(created.userId, email, fullName, temporaryPassword);
             if (refreshed) {
                 showToast({
-                    title: id ? 'Profil berhasil diperbarui' : 'Undangan terkirim',
-                    message: id ? 'Perubahan pengguna berhasil disimpan ke server.' : `Link undangan untuk ${email} berhasil dikirim melalui email.`,
+                    title: id ? 'Profil berhasil diperbarui' : 'Akun berhasil dibuat',
+                    message: id ? 'Perubahan pengguna berhasil disimpan ke server.' : `Akun ${email} berhasil dibuat.`,
                     type: 'success'
                 });
             } else {
@@ -345,7 +360,7 @@ window.UsersModule = (function() {
         } finally {
             isSaving = false;
             button.disabled = false;
-            button.textContent = id ? buttonText : 'Kirim Link Undangan';
+            button.textContent = id ? buttonText : 'Buat Akun';
         }
     }
 
