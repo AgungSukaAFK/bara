@@ -1,0 +1,180 @@
+﻿<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rekonsil Anggaran - Smart BARA 7.10 HZ</title>
+    <link rel="stylesheet" href="css/app.css?v=20261102-smooth-loading">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body class="bg-[#090d16] text-slate-100 flex h-screen overflow-hidden">
+
+    <!-- Sidebar Navigation -->
+    <aside id="appSidebar" class="w-64 glass-panel border-r border-white/10 flex flex-col z-40 fixed inset-y-0 left-0 transition-transform duration-200 lg:static lg:translate-x-0 -translate-x-full">
+    </aside>
+
+    <!-- Main Content Area -->
+    <div class="flex-1 flex flex-col min-w-0 overflow-hidden">
+        <!-- Top Navigation Header -->
+        <header id="appHeader" class="glass-panel border-b border-white/10 px-6 py-3.5 flex items-center justify-between z-20">
+        </header>
+
+        <!-- Page View Body -->
+        <main class="flex-1 overflow-y-auto p-6 space-y-6">
+            <!-- Header Banner -->
+            <div class="glass-panel rounded-2xl p-6 border border-white/10 flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-gradient-to-r from-slate-900 via-slate-900/90 to-teal-950/40 shadow-xl">
+                <div>
+                    <span class="badge badge-teal mb-2">Konsolidasi Anggaran & Rekonsiliasi</span>
+                    <h2 class="text-2xl font-black text-white m-0 tracking-tight">Rekonsil Anggaran</h2>
+                    <p class="text-xs text-slate-400 mt-1 m-0">Pencocokan nilai finance dengan rekonsil manual per transaksi, adjustment, dan catatan audit.</p>
+                </div>
+                <div class="flex items-center gap-2">
+                    <select id="rekonsilSourcePeriod" class="form-select text-xs" aria-label="Periode sumber rekonsil"></select>
+                    <button type="button" onclick="RekonsilModule.pullChangesFromPeriod()" class="btn btn-secondary text-xs whitespace-nowrap" title="Tarik penyesuaian dan catatan manual dari periode sumber">Tarik Perubahan</button>
+                    <span id="rekonsilStatusText" class="text-xs text-slate-400 font-semibold"></span>
+                </div>
+            </div>
+
+            <!-- KPI Cards -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 2xl:grid-cols-4 gap-4">
+                <div class="glass-card rounded-xl p-4 border border-white/10">
+                    <p class="text-[11px] font-bold text-slate-400 uppercase tracking-wider m-0">Total Finance (Debit - Kredit)</p>
+                    <p class="text-2xl font-black text-white mt-1 mb-0 stat-value" id="rekonsilStatFinance">Rp 0</p>
+                </div>
+                <div class="glass-card rounded-xl p-4 border border-white/10">
+                    <p class="text-[11px] font-bold text-slate-400 uppercase tracking-wider m-0">Total Rekonsil Manual</p>
+                    <p class="text-2xl font-black text-emerald-400 mt-1 mb-0 stat-value" id="rekonsilStatReconcile">Rp 0</p>
+                </div>
+                <div class="glass-card rounded-xl p-4 border border-white/10">
+                    <p class="text-[11px] font-bold text-slate-400 uppercase tracking-wider m-0" title="Menghitung transaksi dengan nilai debit, kredit, finance, atau rekonsil nonnol.">Transaksi Direkonsil</p>
+                    <p class="text-2xl font-black text-sky-300 mt-1 mb-0 stat-value" id="rekonsilStatMatched">0 / 0</p>
+                    <p class="mt-1 mb-0 text-[10px] text-slate-500">Baris tanpa nilai transaksi dikecualikan.</p>
+                </div>
+                <div class="glass-card rounded-xl p-4 border border-white/10">
+                    <p class="text-[11px] font-bold text-slate-400 uppercase tracking-wider m-0" title="Jumlah transaksi unik dengan koreksi manual aktif. Entri audit berulang tidak dihitung.">Transaksi Diubah (unik)</p>
+                    <p class="text-2xl font-black text-amber-300 mt-1 mb-0 stat-value" id="rekonsilStatChanged">0</p>
+                    <p class="mt-1 mb-0 text-[10px] text-slate-500">Koreksi aktif; audit dihitung terpisah.</p>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
+                <!-- Data Table Container (2 Cols) -->
+                <div class="xl:col-span-2 glass-panel rounded-xl border border-white/10 overflow-hidden shadow-2xl">
+                    <div class="p-4 border-b border-white/10 flex items-center justify-between">
+                        <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider m-0">Ringkasan Finance & Rekonsil Manual per Departemen</h3>
+                        <span class="text-[11px] text-teal-400 font-semibold">Realtime Sync Active</span>
+                    </div>
+                    <div class="overflow-x-auto max-h-[55vh]">
+                        <table class="app-table">
+                            <thead>
+                                <tr>
+                                    <th>Departemen</th>
+                                    <th class="text-right">Finance (Debit - Kredit)</th>
+                                    <th class="text-right">Adj Finance</th>
+                                    <th class="text-right">Total Finance</th>
+                                    <th class="text-right">Rekonsil Manual</th>
+                                    <th class="text-right">Selisih</th>
+                                    <th class="text-center">Status</th>
+                                    <th>Catatan</th>
+                                </tr>
+                            </thead>
+                            <tbody id="rekonsilTableBody" class="divide-y divide-white/5">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Audit History Sidebar (1 Col) -->
+                <div class="glass-panel rounded-xl border border-white/10 p-4 flex flex-col max-h-[62vh]">
+                    <div class="flex items-center justify-between pb-3 border-b border-white/10 mb-3">
+                        <div>
+                            <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider m-0">Riwayat Perubahan (Audit)</h3>
+                            <span id="rekonsilHistoryCount" class="mt-1 block text-[10px] text-slate-500">0 riwayat</span>
+                        </div>
+                        <span class="text-xs">⏱️</span>
+                    </div>
+                    <div class="grid grid-cols-2 gap-2 mb-3">
+                        <select id="rekonsilHistoryTypeFilter" class="form-select text-[10px]" onchange="RekonsilModule.setHistoryFilter(this.value, document.getElementById('rekonsilHistoryDeptFilter')?.value || 'all')">
+                            <option value="all">Semua tipe</option>
+                            <option value="Rekonsil">Rekonsil</option>
+                            <option value="Akun Manual">Akun Manual</option>
+                            <option value="Proyek Manual">Proyek Manual</option>
+                            <option value="Catatan">Catatan</option>
+                        </select>
+                        <select id="rekonsilHistoryDeptFilter" class="form-select text-[10px]" onchange="RekonsilModule.setHistoryFilter(document.getElementById('rekonsilHistoryTypeFilter')?.value || 'all', this.value)">
+                            <option value="all">Semua dept</option>
+                        </select>
+                    </div>
+                    <div id="rekonsilHistoryList" class="flex-1 overflow-y-auto space-y-2 pr-1">
+                    </div>
+                    <button type="button" id="rekonsilHistoryLoadMore" onclick="RekonsilModule.loadMoreHistory()" class="btn btn-secondary mt-2 hidden text-[10px]">Muat riwayat berikutnya</button>
+                </div>
+            </div>
+
+            <section class="glass-panel rounded-xl border border-white/10 overflow-hidden">
+                <div class="flex flex-col gap-3 border-b border-white/10 p-4">
+                    <div>
+                        <h3 class="m-0 text-xs font-bold uppercase text-slate-300">Semua Transaksi Rekonsil Anggaran</h3>
+                        <p id="rekonsilTransactionCount" class="mb-0 mt-1 text-[10px] text-slate-500">0 transaksi</p>
+                    </div>
+                    <div class="flex flex-wrap items-center justify-between gap-3">
+                        <div class="inline-flex rounded-lg border border-white/10 bg-slate-950/60 p-1" role="group" aria-label="Filter transaksi rekonsiliasi">
+                            <button type="button" onclick="RekonsilModule.setTransactionFilter('all')" class="btn btn-secondary text-[11px]" id="rekonsilFilterAll">Semua</button>
+                            <button type="button" onclick="RekonsilModule.setTransactionFilter('unreconciled')" class="btn btn-secondary text-[11px]" id="rekonsilFilterUnreconciled">Belum Direkonsil</button>
+                            <button type="button" onclick="RekonsilModule.setTransactionFilter('changed')" class="btn btn-secondary text-[11px]" id="rekonsilFilterChanged">Sudah Diubah</button>
+                        </div>
+                        <div class="flex flex-wrap items-center gap-2">
+                            <select id="rekonsilTransactionMonthFilter" class="form-select w-36 text-xs" onchange="RekonsilModule.setTransactionMonthFilter()" aria-label="Filter bulan transaksi">
+                                <option value="">Semua Bulan</option>
+                                <option value="01">Januari</option><option value="02">Februari</option><option value="03">Maret</option>
+                                <option value="04">April</option><option value="05">Mei</option><option value="06">Juni</option>
+                                <option value="07">Juli</option><option value="08">Agustus</option><option value="09">September</option>
+                                <option value="10">Oktober</option><option value="11">November</option><option value="12">Desember</option>
+                            </select>
+                            <input id="rekonsilTransactionSearch" type="search" oninput="RekonsilModule.scheduleTransactionSearch()" placeholder="Cari ID, akun, departemen..." class="form-input w-full max-w-xs text-xs">
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <input type="file" id="rekonsilImportChangesInput" accept=".xlsx,.xls,.csv" class="hidden" onchange="RekonsilModule.importChanges(event)">
+                            <button type="button" onclick="document.getElementById('rekonsilImportChangesInput').click()" class="btn btn-secondary text-xs">Import Perubahan</button>
+                            <button type="button" id="rekonsilFullViewToggle" onclick="RekonsilModule.toggleFullTableView()" class="btn btn-secondary text-xs" aria-pressed="false">Full View</button>
+                            <button type="button" onclick="RekonsilModule.exportToExcel()" class="btn btn-primary text-xs">Export Excel</button>
+                        </div>
+                    </div>
+                </div>
+                <div id="rekonsilTransactionTableWrap" class="max-h-[55vh] overflow-auto">
+                    <table class="app-table">
+                        <thead class="sticky top-0 z-10 bg-slate-900">
+                            <tr>
+                                <th>ID Transaksi</th><th>Dept</th><th>Tanggal</th><th>No Sumber</th><th>Keterangan</th><th>Akun Manual</th><th>Proyek Manual</th>
+                                <th class="text-right">Debit</th><th class="text-right">Kredit</th><th class="text-right">Finance</th>
+                                <th class="text-right">Rekonsil Manual</th><th class="text-right">Selisih</th><th>Catatan Manual</th><th>Tambah Manual</th>
+                            </tr>
+                        </thead>
+                        <tbody id="rekonsilTransactionTableBody" class="divide-y divide-white/5"></tbody>
+                    </table>
+                </div>
+                <div class="flex justify-center border-t border-white/10 p-3">
+                    <button type="button" id="rekonsilLoadMoreButton" onclick="RekonsilModule.loadMoreTransactions()" class="btn btn-secondary text-xs hidden">Muat 200 transaksi lagi</button>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Scripts -->
+    <script src="js/config.js?v=20261105-goa"></script>
+    <script src="js/utils/formatters.js?v=20261101-final-rekonsil"></script>
+    <script src="js/core.js?v=20261105-goa"></script>
+    <script src="js/modules/upload.js?v=20261104-budget-ytd-range-fix"></script>
+    <script src="js/layout.js?v=20261102-upload-preview-wide"></script>
+    <script src="js/modules/rekonsil.js?v=20261102-history-effective-original-value"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', async () => {
+            await window.SmartBaraCore.init();
+            await window.SmartBaraLayout.init('rekonsil');
+            await window.RekonsilModule.init();
+        });
+    </script>
+</body>
+</html>
+

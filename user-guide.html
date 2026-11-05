@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>User Guide - Smart BARA 7.10 HZ</title>
+    <link rel="stylesheet" href="css/app.css?v=20261102-smooth-loading">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body class="bg-[#090d16] text-slate-100 flex h-screen overflow-hidden">
+    <aside id="appSidebar" class="w-64 glass-panel border-r border-white/10 flex flex-col z-40 fixed inset-y-0 left-0 transition-transform duration-200 lg:static lg:translate-x-0 -translate-x-full"></aside>
+    <div class="flex-1 flex flex-col min-w-0 overflow-hidden">
+        <header id="appHeader" class="glass-panel border-b border-white/10 px-6 py-3.5 flex items-center justify-between z-20"></header>
+        <main id="ebookRoot" class="flex-1 overflow-y-auto p-4 sm:p-6">
+            <section class="glass-panel rounded-2xl border border-white/10 p-6">
+                <span class="badge badge-teal mb-3">User Guide</span>
+                <h1 class="text-2xl font-black text-white m-0">SOP Penggunaan Smart BARA</h1>
+                <p class="mt-3 text-sm text-slate-300 leading-6 m-0">
+                    Panduan operasi sistem ini menampilkan alur kerja seperti SOP: login, pilih periode, upload data, validasi, rekonsil, dan analisa. Gunakan sebagai referensi untuk penggunaan harian dan onboarding user.
+                </p>
+            </section>
+
+            <section class="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                <article class="glass-panel rounded-2xl border border-white/10 p-5">
+                    <div class="flex items-center justify-between mb-3">
+                        <h2 class="text-lg font-black text-white m-0">SOP 01 · Login & Akses</h2>
+                        <span class="badge badge-slate">1</span>
+                    </div>
+                    <div class="space-y-3">
+                        <div class="rounded-xl border border-white/10 bg-slate-900/60 p-3">
+                            <p class="m-0 text-[10px] font-bold uppercase text-slate-400">Mockup tampilan</p>
+                            <div class="mt-2 rounded-lg border border-white/10 bg-slate-950/60 p-3">
+                                <div class="flex items-center justify-between text-[10px] text-slate-300"><span>Login</span><span>Smart BARA</span></div>
+                                <div class="mt-3 space-y-2">
+                                    <div class="h-8 rounded bg-slate-800/80"></div>
+                                    <div class="h-8 rounded bg-slate-800/80"></div>
+                                    <div class="h-9 rounded bg-teal-500/30 border border-teal-400/40"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <ul class="space-y-2 text-sm text-slate-300 leading-6 list-disc pl-5 m-0">
+                            <li>Buka halaman login lalu masuk dengan email dan password yang valid.</li>
+                            <li>Jika akun belum punya akses, hubungi admin atau superadmin.</li>
+                            <li>Role yang tersedia: viewer, tim, spv, dan superadmin.</li>
+                        </ul>
+                    </div>
+                </article>
+
+                <article class="glass-panel rounded-2xl border border-white/10 p-5">
+                    <div class="flex items-center justify-between mb-3">
+                        <h2 class="text-lg font-black text-white m-0">SOP 02 · Pilih Periode</h2>
+                        <span class="badge badge-slate">2</span>
+                    </div>
+                    <div class="space-y-3">
+                        <div class="rounded-xl border border-white/10 bg-slate-900/60 p-3">
+                            <p class="m-0 text-[10px] font-bold uppercase text-slate-400">Mockup header aplikasi</p>
+                            <div class="mt-2 rounded-lg border border-white/10 bg-slate-950/60 p-3 space-y-2">
+                                <div class="flex items-center justify-between text-[10px] text-slate-300"><span>Periode aktif</span><span>GMI-AGUSTUS 2026</span></div>
+                                <div class="flex gap-2">
+                                    <div class="h-8 flex-1 rounded bg-slate-800/80"></div>
+                                    <div class="h-8 w-20 rounded bg-teal-500/30 border border-teal-400/40"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <ul class="space-y-2 text-sm text-slate-300 leading-6 list-disc pl-5 m-0">
+                            <li>Pilih periode aktif di header aplikasi.</li>
+                            <li>Pastikan periode yang dipilih benar sebelum upload atau analisa.</li>
+                            <li>Jangan mencampur periode GMI dan GIS dalam satu tampilan.</li>
+                        </ul>
+                    </div>
+                </article>
+
+                <article class="glass-panel rounded-2xl border border-white/10 p-5">
+                    <div class="flex items-center justify-between mb-3">
+                        <h2 class="text-lg font-black text-white m-0">SOP 03 · Upload Excel</h2>
+                        <span class="badge badge-slate">3</span>
+                    </div>
+                    <div class="space-y-3">
+                        <div class="rounded-xl border border-white/10 bg-slate-900/60 p-3">
+                            <p class="m-0 text-[10px] font-bold uppercase text-slate-400">Preview data</p>
+                            <div class="mt-2 rounded-lg border border-white/10 bg-slate-950/60 p-3 space-y-2">
+                                <div class="grid grid-cols-4 gap-2 text-[10px] text-slate-300">
+                                    <div class="h-6 rounded bg-slate-800"></div>
+                                    <div class="h-6 rounded bg-slate-800"></div>
+                                    <div class="h-6 rounded bg-slate-800"></div>
+                                    <div class="h-6 rounded bg-slate-800"></div>
+                                </div>
+                                <div class="h-12 rounded bg-slate-800/70"></div>
+                            </div>
+                        </div>
+                        <ul class="space-y-2 text-sm text-slate-300 leading-6 list-disc pl-5 m-0">
+                            <li>Pilih menu Upload Excel Multi Dept.</li>
+                            <li>Pastikan header file sesuai mapping dan nama departemen benar.</li>
+                            <li>Preview data muncul sebelum proses update final.</li>
+                        </ul>
+                    </div>
+                </article>
+
+                <article class="glass-panel rounded-2xl border border-white/10 p-5">
+                    <div class="flex items-center justify-between mb-3">
+                        <h2 class="text-lg font-black text-white m-0">SOP 04 · Dashboard</h2>
+                        <span class="badge badge-slate">4</span>
+                    </div>
+                    <div class="space-y-3">
+                        <div class="rounded-xl border border-white/10 bg-slate-900/60 p-3">
+                            <p class="m-0 text-[10px] font-bold uppercase text-slate-400">Kartu KPI</p>
+                            <div class="mt-2 grid grid-cols-2 gap-2">
+                                <div class="h-16 rounded bg-white/5 border border-white/10"></div>
+                                <div class="h-16 rounded bg-white/5 border border-white/10"></div>
+                                <div class="h-16 rounded bg-white/5 border border-white/10"></div>
+                                <div class="h-16 rounded bg-white/5 border border-white/10"></div>
+                            </div>
+                        </div>
+                        <ul class="space-y-2 text-sm text-slate-300 leading-6 list-disc pl-5 m-0">
+                            <li>Dashboard menampilkan budget plan, finance, rekonsil, selisih, dan prediksi.</li>
+                            <li>Prediksi dihitung dari realisasi YTD lalu diproyeksikan sampai akhir tahun.</li>
+                            <li>Klik kartu untuk melihat detail perhitungan.</li>
+                        </ul>
+                    </div>
+                </article>
+
+                <article class="glass-panel rounded-2xl border border-white/10 p-5">
+                    <div class="flex items-center justify-between mb-3">
+                        <h2 class="text-lg font-black text-white m-0">SOP 05 · Rekonsil Anggaran</h2>
+                        <span class="badge badge-slate">5</span>
+                    </div>
+                    <div class="space-y-3">
+                        <div class="rounded-xl border border-white/10 bg-slate-900/60 p-3">
+                            <p class="m-0 text-[10px] font-bold uppercase text-slate-400">Tabel transaksi</p>
+                            <div class="mt-2 rounded-lg border border-white/10 bg-slate-950/60 p-3 space-y-2">
+                                <div class="grid grid-cols-5 gap-2 text-[10px] text-slate-300">
+                                    <div class="h-6 rounded bg-slate-800"></div>
+                                    <div class="h-6 rounded bg-slate-800"></div>
+                                    <div class="h-6 rounded bg-slate-800"></div>
+                                    <div class="h-6 rounded bg-slate-800"></div>
+                                    <div class="h-6 rounded bg-slate-800"></div>
+                                </div>
+                                <div class="h-10 rounded bg-slate-800/70"></div>
+                            </div>
+                        </div>
+                        <ul class="space-y-2 text-sm text-slate-300 leading-6 list-disc pl-5 m-0">
+                            <li>Isi akun manual dan proyek manual dari pilihan yang tersedia.</li>
+                            <li>Sesuaikan nilai rekonsil manual dan catatan jika ada selisih.</li>
+                            <li>History hanya menampilkan perubahan yang relevan di rekonsil anggaran.</li>
+                        </ul>
+                    </div>
+                </article>
+
+                <article class="glass-panel rounded-2xl border border-white/10 p-5">
+                    <div class="flex items-center justify-between mb-3">
+                        <h2 class="text-lg font-black text-white m-0">SOP 06 · Analisa Kenaikan Budget</h2>
+                        <span class="badge badge-slate">6</span>
+                    </div>
+                    <div class="space-y-3">
+                        <div class="rounded-xl border border-white/10 bg-slate-900/60 p-3">
+                            <p class="m-0 text-[10px] font-bold uppercase text-slate-400">Estimasi akhir tahun</p>
+                            <div class="mt-2 rounded-lg border border-white/10 bg-slate-950/60 p-3">
+                                <div class="flex justify-between text-[10px] text-slate-300"><span>Aktual</span><span>Rp 3.7 M</span></div>
+                                <div class="mt-2 flex justify-between text-[10px] text-slate-300"><span>Forecast</span><span>Rp 5.5 M</span></div>
+                            </div>
+                        </div>
+                        <ul class="space-y-2 text-sm text-slate-300 leading-6 list-disc pl-5 m-0">
+                            <li>Forecast akhir tahun dihitung dari run-rate YTD.</li>
+                            <li>Bandingkan hasil forecast dengan rekonsil dan anggaran masa depan.</li>
+                            <li>Gunakan filter departemen dan search akun agar analisa lebih cepat.</li>
+                        </ul>
+                    </div>
+                </article>
+            </section>
+
+            <section class="glass-panel rounded-2xl border border-white/10 p-5">
+                <h2 class="text-lg font-black text-white m-0">SOP 07 · Aturan penggunaan yang penting</h2>
+                <ul class="mt-4 space-y-2 text-sm text-slate-300 leading-6 list-disc pl-5 m-0">
+                    <li>Selalu pilih periode yang benar sebelum melakukan upload, koreksi, atau analisa.</li>
+                    <li>Jangan mencampur data GMI dan GIS dalam satu periode yang sama.</li>
+                    <li>Jika browser menampilkan data lama, refresh halaman dan pastikan cache tidak tersimpan lama.</li>
+                    <li>Jika localStorage penuh, aplikasi akan mencoba membersihkan cache lama dan menghindari error kuota browser.</li>
+                </ul>
+            </section>
+        </main>
+    </div>
+
+    <script src="js/config.js?v=20261105-goa"></script>
+    <script src="js/utils/formatters.js"></script>
+    <script src="js/core.js?v=20261105-goa"></script>
+    <script src="js/layout.js?v=20261101-loading-success-all-menus-3"></script>
+    <script src="js/modules/user-guide.js?v=20261101-ebook-reader-2"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', async () => {
+            await window.SmartBaraCore.init();
+            await window.SmartBaraLayout.init('user-guide');
+            window.UserGuideModule.init();
+        });
+    </script>
+</body>
+</html>

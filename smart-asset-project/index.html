@@ -1,0 +1,786 @@
+<!DOCTYPE html>
+<html lang="id" data-theme="dark">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SMART ASSET GA 7.10 HZ — Rekap & Monitoring Aset</title>
+<meta name="description" content="Aplikasi monitoring dan rekap aset terhubung ke cloud Smart BARA." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+<script src="/js/config.js"></script>
+<link rel="stylesheet" href="styles.css" />
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="/js/core.js"></script>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js"></script>
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+<script>
+  window.smartAssetSupabase = window.SmartBaraCore?.initAuthOnly?.() || null;
+</script>
+</head>
+<body>
+  <section id="assetAuthGate" hidden style="min-height:100vh;display:none;place-items:center;padding:24px;background:#070b14;color:#e2e8f0;font-family:'Plus Jakarta Sans','Segoe UI',sans-serif">
+    <div style="max-width:440px;padding:28px;border:1px solid rgba(148,163,184,.25);border-radius:16px;background:#0d1526;text-align:center">
+      <h1 style="margin:0 0 8px;font-size:22px">Login diperlukan</h1>
+      <p style="margin:0 0 20px;color:#94a3b8;font-size:13px;line-height:1.6">Data Asset Monitoring hanya tersedia setelah login ke Smart BARA.</p>
+      <a href="/login.html" style="display:inline-block;padding:10px 16px;border-radius:8px;background:#0f766e;color:white;font-size:13px;font-weight:700;text-decoration:none">Login Smart BARA</a>
+    </div>
+  </section>
+  <div class="bg-orbs" aria-hidden="true">
+    <span class="orb orb-1"></span>
+    <span class="orb orb-2"></span>
+    <span class="orb orb-3"></span>
+  </div>
+
+  <div class="sidebar-trigger" id="sidebarTrigger" aria-hidden="true"></div>
+  <div class="app">
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-brand">
+        <div class="brand-icon"><span class="hz-mark">HZ</span></div>
+        <div class="brand-text">
+          <div class="brand-name">SMART ASSET</div>
+          <div class="brand-sub">GA 7.10 HZ</div>
+        </div>
+      </div>
+      <nav class="sidebar-nav">
+        <button class="nav-item active" data-view="dashboard"><i data-lucide="layout-dashboard"></i><span>Dashboard</span></button>
+        <button class="nav-item" data-view="assets"><i data-lucide="list"></i><span>Daftar Aset</span></button>
+        <button class="nav-item" data-view="monthly"><i data-lucide="calendar"></i><span>Per Bulan</span></button>
+        <button class="nav-item" data-view="audit"><i data-lucide="clipboard-check"></i><span>Audit Asset</span></button>
+        <button class="nav-item" data-view="add"><i data-lucide="plus-circle"></i><span>Tambah Aset</span></button>
+        <button class="nav-item" data-view="report"><i data-lucide="file-spreadsheet"></i><span>Rekap & Export</span></button>
+        <button class="nav-item" data-view="upload"><i data-lucide="upload-cloud"></i><span>Upload Data</span></button>
+        <button class="nav-item" data-view="settings"><i data-lucide="settings"></i><span>Pengaturan</span></button>
+        <button class="nav-item nav-back" type="button" onclick="window.location.href='../index.html'">
+          <i data-lucide="arrow-left"></i><span>Kembali ke Smart BARA</span>
+        </button>
+      </nav>
+      <div class="sidebar-footer">
+        <div class="storage-badge online">
+          <span class="status-dot"></span>
+          <span>Cloud Online • Supabase</span>
+        </div>
+      </div>
+    </aside>
+
+    <div class="main">
+      <header class="topbar">
+        <button class="icon-btn menu-btn" id="menuBtn" aria-label="Menu"><i data-lucide="menu"></i></button>
+
+        <div class="topbar-title">
+          <h1 id="viewTitle">Dashboard</h1>
+          <p id="viewSubtitle">Ringkasan monitoring aset Anda</p>
+        </div>
+        <div class="topbar-actions">
+          <div class="search-global">
+            <i data-lucide="search"></i>
+            <input type="text" id="globalSearch" placeholder="Cari aset..." />
+          </div>
+          <button class="icon-btn" id="themeToggle" aria-label="Ganti tema"><i data-lucide="moon"></i></button>
+          <button class="btn btn-primary btn-sm" id="quickExport"><i data-lucide="download"></i><span>Export</span></button>
+        </div>
+      </header>
+
+      <main class="content">
+        <!-- DASHBOARD -->
+        <section class="view active" id="view-dashboard">
+          <div class="stats-grid">
+            <div class="stat-card glass" style="cursor:pointer" onclick="openDrill('Semua Aset', assets)">
+              <div class="stat-icon indigo"><i data-lucide="package"></i></div>
+              <div class="stat-body">
+                <div class="stat-label">Total Aset</div>
+                <div class="stat-value" id="statTotal">0</div>
+                <div class="stat-hint" id="statTotalHint">tercatat</div>
+              </div>
+            </div>
+            <div class="stat-card glass" style="cursor:pointer" onclick="openDrill('Semua Aset', assets)">
+              <div class="stat-icon cyan"><i data-lucide="banknote"></i></div>
+              <div class="stat-body">
+                <div class="stat-label">Total Nilai Perolehan</div>
+                <div class="stat-value" id="statValue">Rp 0</div>
+                <div class="stat-hint">akumulasi harga</div>
+              </div>
+            </div>
+            <div class="stat-card glass" style="cursor:pointer" onclick="showCategoryBreakdown()">
+              <div class="stat-icon emerald"><i data-lucide="layers"></i></div>
+              <div class="stat-body">
+                <div class="stat-label">Kategori</div>
+                <div class="stat-value" id="statCat">0</div>
+                <div class="stat-hint">jenis aset</div>
+              </div>
+            </div>
+            <div class="stat-card glass" style="cursor:pointer" onclick="openDrill('Semua Aset', assets)">
+              <div class="stat-icon amber"><i data-lucide="trending-up"></i></div>
+              <div class="stat-body">
+                <div class="stat-label">Rata-rata Nilai</div>
+                <div class="stat-value" id="statAvg">Rp 0</div>
+                <div class="stat-hint">per aset</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="grid-2">
+            <div class="card glass">
+              <div class="card-head">
+                <h3>Distribusi per Kategori</h3>
+                <span class="card-sub">Jumlah aset</span>
+              </div>
+              <div class="chart-wrap"><canvas id="chartPie"></canvas></div>
+            </div>
+            <div class="card glass">
+              <div class="card-head">
+                <h3>Nilai per Kategori</h3>
+                <span class="card-sub">Total perolehan</span>
+              </div>
+              <div class="chart-wrap"><canvas id="chartBar"></canvas></div>
+            </div>
+          </div>
+
+          <div class="card glass">
+            <div class="card-head">
+              <h3>Nilai per Lokasi</h3>
+              <span class="card-sub">Total perolehan per lokasi</span>
+            </div>
+            <div class="chart-wrap"><canvas id="chartLoc"></canvas></div>
+          </div>
+
+          <div class="card glass">
+            <div class="card-head">
+              <h3>Tren Pembelian per Tahun</h3>
+              <span class="card-sub">Jumlah aset dibeli</span>
+            </div>
+            <div class="chart-wrap chart-wide"><canvas id="chartLine"></canvas></div>
+          </div>
+
+          <div class="card glass">
+            <div class="card-head">
+              <h3>Aset Terbaru</h3>
+              <span class="card-sub">10 terakhir</span>
+            </div>
+            <div class="table-wrap">
+              <table class="data-table" id="recentTable">
+                <thead><tr>
+                  <th>Kode</th><th>Nama Aset</th><th>Kategori</th><th>Harga</th><th>Tgl Beli</th><th></th>
+                </tr></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- ASSETS -->
+        <section class="view" id="view-assets">
+          <div class="toolbar">
+            <div class="toolbar-left">
+              <div class="input-group">
+                <i data-lucide="search"></i>
+                <input type="text" id="assetSearch" placeholder="Cari kode / nama..." />
+              </div>
+              <select id="assetFilterCat" class="select">
+                <option value="">Semua Kategori</option>
+              </select>
+              <select id="assetFilterLoc" class="select">
+                <option value="">Semua Lokasi</option>
+              </select>
+              <select id="depFilter" class="select">
+                <option value="">Semua Status Penyusutan</option>
+                <option value="belum">Belum Habis Disusutkan</option>
+                <option value="habis">Sudah Habis Disusutkan</option>
+              </select>
+              <input type="number" id="priceMin" class="select" placeholder="Harga min" style="width:120px" />
+              <input type="number" id="priceMax" class="select" placeholder="Harga max" style="width:120px" />
+              <select id="assetSort" class="select">
+                <option value="id">Urutkan: ID</option>
+                <option value="nama">Nama</option>
+                <option value="harga">Harga</option>
+                <option value="tglBeli">Tgl Beli</option>
+                <option value="tipe">Kategori</option>
+              </select>
+              <button class="icon-btn" id="sortDirBtn" title="Arah sort"><i data-lucide="arrow-down"></i></button>
+            </div>
+            <div class="toolbar-right">
+              <select id="pageSize" class="select">
+                <option value="25">25 / hal</option>
+                <option value="50">50 / hal</option>
+                <option value="100">100 / hal</option>
+                <option value="999999">Semua</option>
+              </select>
+              <button class="btn btn-ghost btn-sm" id="clearFilters"><i data-lucide="rotate-ccw"></i><span>Reset</span></button>
+            </div>
+          </div>
+          <div class="card glass">
+            <div class="table-wrap">
+              <table class="data-table" id="assetTable">
+                <thead><tr>
+                  <th onclick="setSort('kode')">Kode</th><th onclick="setSort('adjCode')">Penyesuaian Kode Asset</th><th onclick="setSort('nama')">Nama Aset</th><th onclick="setSort('tipe')">Kategori</th><th onclick="setSort('lokasi')">Lokasi</th><th onclick="setSort('noAkun')">No. Akun</th><th onclick="setSort('harga')">Harga</th><th onclick="setSort('tglPakai')">Tgl Pakai</th><th onclick="setSort('tglBeli')">Tgl Beli</th><th onclick="setSort('umur')">Umur</th><th onclick="setSort('masaDep')">Masa Depresiasi</th><th onclick="setSort('rasio')">Rasio</th><th onclick="setSort('dsScore')">DS Score</th><th onclick="setSort('penyBulanan')">Peny. Bulanan</th><th onclick="setSort('akumulasi')">Akumulasi</th><th onclick="setSort('periodeIni')">Periode Ini</th><th onclick="setSort('nilaiBuku')">Nilai Buku</th><th onclick="setSort('sisaNilai')">Sisa Nilai Depresiasi</th><th onclick="setSort('status')">Status</th><th onclick="setSort('auditStatus')">Status Audit</th><th>Aksi</th>
+                </tr></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+            <div class="pagination" id="pagination"></div>
+          </div>
+        </section>
+
+        <!-- ADD -->
+        <section class="view" id="view-add">
+          <div class="card glass form-card">
+            <div class="card-head">
+              <h3 id="formTitle">Tambah Aset Baru</h3>
+              <span class="card-sub">Isi detail aset, simpan ke cloud Smart BARA</span>
+            </div>
+            <form id="assetForm">
+              <input type="hidden" id="fId" />
+              <div class="form-grid">
+                <div class="field">
+                  <label>Kode Aset *</label>
+                  <input type="text" id="fKode" required placeholder="GMI01-..." />
+                </div>
+                <div class="field">
+                  <label>Nama Aset *</label>
+                  <input type="text" id="fNama" required placeholder="Nama aset" />
+                </div>
+                <div class="field">
+                  <label>Kategori / Tipe *</label>
+                  <input type="text" id="fTipe" list="catList" required placeholder="Bangunan, Kendaraan, ..." />
+                  <datalist id="catList"></datalist>
+                </div>
+                <div class="field">
+                  <label>No. Akun Aktiva</label>
+                  <input type="text" id="fNoAkun" placeholder="1008.03" />
+                </div>
+                <div class="field">
+                  <label>Harga Perolehan (Rp) *</label>
+                  <input type="number" id="fHarga" required min="0" step="1" placeholder="0" />
+                </div>
+                <div class="field">
+                  <label>Tgl Pemakaian</label>
+                  <input type="date" id="fTglPakai" />
+                </div>
+                <div class="field">
+                  <label>Tgl Pembelian</label>
+                  <input type="date" id="fTglBeli" />
+                </div>
+                <div class="field">
+                  <label>Estimasi Umur (Tahun)</label>
+                  <select id="fUmur" class="select">
+                    <option value="">Pilih umur</option>
+                    <option value="1 Yr 0 Mth">1 Tahun</option>
+                    <option value="2 Yr 0 Mth">2 Tahun</option>
+                    <option value="3 Yr 0 Mth">3 Tahun</option>
+                    <option value="4 Yr 0 Mth">4 Tahun</option>
+                    <option value="5 Yr 0 Mth">5 Tahun</option>
+                    <option value="6 Yr 0 Mth">6 Tahun</option>
+                    <option value="7 Yr 0 Mth">7 Tahun</option>
+                    <option value="8 Yr 0 Mth">8 Tahun</option>
+                    <option value="9 Yr 0 Mth">9 Tahun</option>
+                    <option value="10 Yr 0 Mth">10 Tahun</option>
+                    <option value="11 Yr 0 Mth">11 Tahun</option>
+                    <option value="12 Yr 0 Mth">12 Tahun</option>
+                    <option value="13 Yr 0 Mth">13 Tahun</option>
+                    <option value="14 Yr 0 Mth">14 Tahun</option>
+                    <option value="15 Yr 0 Mth">15 Tahun</option>
+                    <option value="16 Yr 0 Mth">16 Tahun</option>
+                    <option value="17 Yr 0 Mth">17 Tahun</option>
+                    <option value="18 Yr 0 Mth">18 Tahun</option>
+                    <option value="19 Yr 0 Mth">19 Tahun</option>
+                    <option value="20 Yr 0 Mth">20 Tahun</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label>% Rasio Depr.</label>
+                  <input type="number" id="fRasio" min="0" max="100" step="0.01" placeholder="25" />
+                </div>
+                <div class="field">
+                  <label>Metode Penyusutan</label>
+                  <input type="text" id="fMetode" placeholder="Metode Garis Lurus" />
+                </div>
+                <div class="field">
+                  <label>DS Score</label>
+                  <input type="number" id="fDsScore" min="0" max="100" step="1" placeholder="0-100" />
+                </div>
+                <div class="field">
+                  <label>Lokasi</label>
+                  <input type="text" id="fLokasi" list="locList" placeholder="Lokasi aset" />
+                  <datalist id="locList"></datalist>
+                </div>
+              </div>
+              <div class="form-actions">
+                <button type="button" class="btn btn-ghost" id="formReset">Reset</button>
+                <button type="submit" class="btn btn-primary"><i data-lucide="save"></i><span>Simpan</span></button>
+              </div>
+            </form>
+          </div>
+        </section>
+
+        <!-- MONTHLY VIEW -->
+        <section class="view" id="view-monthly">
+          <div class="card glass">
+            <div class="card-head">
+              <h3>Analisis Aset Per Bulan</h3>
+              <span class="card-sub">Lihat distribusi aset berdasarkan bulan pembelian/pemakaian</span>
+            </div>
+            <div class="report-controls">
+              <div class="field">
+                <label>Berdasarkan</label>
+                <select id="monthlyBasis" class="select">
+                  <option value="tglBeli">Tanggal Pembelian</option>
+                  <option value="tglPakai">Tanggal Pemakaian</option>
+                </select>
+              </div>
+              <div class="field">
+                <label>Kategori</label>
+                <select id="monthlyCat" class="select"><option value="">Semua</option></select>
+              </div>
+              <div class="field">
+                <label>Lokasi</label>
+                <select id="monthlyLoc" class="select"><option value="">Semua</option></select>
+              </div>
+            </div>
+            <div class="report-preview">
+              <div class="report-summary" id="monthlySummary"></div>
+              <div class="table-wrap">
+                <table class="data-table" id="monthlyTable">
+                  <thead><tr>
+                    <th>Periode</th><th>Jumlah Aset</th><th>Total Nilai</th><th>Total Penyusutan Bulanan</th><th>Total Akumulasi</th><th>Total Nilai Buku</th>
+                  </tr></thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+            </div>
+            <div class="report-actions">
+              <button class="btn btn-primary" id="exportMonthlyXlsx"><i data-lucide="file-spreadsheet"></i><span>Export Excel</span></button>
+              <button class="btn btn-ghost" id="exportMonthlyCsv"><i data-lucide="file-text"></i><span>Export CSV</span></button>
+              <button class="btn btn-ghost" id="exportMonthlyPpt"><i data-lucide="presentation"></i><span>Export PPT</span></button>
+            </div>
+          </div>
+        </section>
+
+        <!-- REPORT -->
+        <section class="view" id="view-report">
+          <div class="card glass">
+            <div class="card-head">
+              <h3>Rekap & Export</h3>
+              <span class="card-sub">Unduh data rapi ke Excel/CSV</span>
+            </div>
+            <div class="report-controls">
+              <div class="field">
+                <label>Kategori</label>
+                <select id="repCat" class="select"><option value="">Semua</option></select>
+              </div>
+              <div class="field">
+                <label>Lokasi</label>
+                <select id="repLoc" class="select"><option value="">Semua</option></select>
+              </div>
+              <div class="field">
+                <label>Dari Tanggal (Beli)</label>
+                <input type="date" id="repFrom" />
+              </div>
+              <div class="field">
+                <label>Sampai Tanggal (Beli)</label>
+                <input type="date" id="repTo" />
+              </div>
+              <div class="field">
+                <label>Harga Min</label>
+                <input type="number" id="repPriceMin" placeholder="0" />
+              </div>
+              <div class="field">
+                <label>Harga Max</label>
+                <input type="number" id="repPriceMax" placeholder="∞" />
+              </div>
+              <div class="field">
+                <label>Cari</label>
+                <input type="text" id="repSearch" placeholder="kode/nama" />
+              </div>
+            </div>
+            <div class="report-actions">
+              <button class="btn btn-primary" id="exportXlsx"><i data-lucide="file-spreadsheet"></i><span>Export Excel (.xlsx)</span></button>
+              <button class="btn btn-ghost" id="exportCsv"><i data-lucide="file-text"></i><span>Export CSV</span></button>
+              <button class="btn btn-ghost" id="exportPpt"><i data-lucide="presentation"></i><span>Export PPT</span></button>
+              <button class="btn btn-ghost" id="printReport"><i data-lucide="printer"></i><span>Cetak / PDF</span></button>
+            </div>
+            <div class="report-preview">
+              <div class="report-summary" id="reportSummary"></div>
+              <div class="table-wrap">
+                <table class="data-table" id="reportTable">
+                  <thead><tr>
+                    <th>Kode</th><th>Nama Aset</th><th>Kategori</th><th>Lokasi</th><th>Harga</th><th>DS Score</th><th>Tgl Beli</th>
+                  </tr></thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+           <div class="card glass">
+             <div class="card-head">
+               <h3>Rekap Aset per Bulan</h3>
+               <span class="card-sub">Jumlah & total nilai perolehan per bulan</span>
+             </div>
+             <div class="table-wrap">
+               <table class="data-table" id="reportMonthlyTable">
+                 <thead><tr>
+                   <th>Bulan</th><th>Jumlah Aset</th><th>Total Nilai</th>
+                 </tr></thead>
+                 <tbody></tbody>
+               </table>
+             </div>
+           </div>
+         </section>
+
+        <!-- AUDIT -->
+        <section class="view" id="view-audit">
+          <div class="card glass">
+            <div class="card-head">
+              <h3>Audit Aset</h3>
+              <span class="card-sub">Setiap aset harus diaudit dan dicatat kondisinya</span>
+            </div>
+            <div class="report-summary" id="auditSummary"></div>
+            <div class="toolbar">
+              <div class="toolbar-left">
+                <div class="input-group">
+                  <i data-lucide="search"></i>
+                  <input type="text" id="auditSearch" placeholder="Cari kode / nama..." />
+                </div>
+                <select id="auditFilterCat" class="select"><option value="">Semua Kategori</option></select>
+                <select id="auditFilterLoc" class="select"><option value="">Semua Lokasi</option></select>
+                <select id="auditFilterCond" class="select">
+                  <option value="">Semua Kondisi</option>
+                  <option value="Belum">Belum Diaudit</option>
+                  <option value="Baik">Baik</option>
+                  <option value="Rusak">Rusak</option>
+                  <option value="Hilang">Hilang</option>
+                  <option value="Pindah">Pindah</option>
+                </select>
+              </div>
+            </div>
+            <div class="card glass" style="padding:0">
+              <div class="table-wrap">
+                <table class="data-table" id="auditAssetTable">
+                  <thead><tr>
+                    <th onclick="setAuditSort('kode')">Kode</th>
+                    <th onclick="setAuditSort('nama')">Nama Aset</th>
+                    <th onclick="setAuditSort('tipe')">Kategori</th>
+                    <th onclick="setAuditSort('lokasi')">Lokasi</th>
+                    <th onclick="setAuditSort('status')">Status Audit</th>
+                    <th onclick="setAuditSort('kondisi')">Kondisi Terakhir</th>
+                    <th onclick="setAuditSort('tanggal')">Tgl Audit</th>
+                    <th>Aksi</th>
+                  </tr></thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+          <div class="card glass">
+            <div class="card-head">
+              <h3>Riwayat Audit</h3>
+              <span class="card-sub">Catatan audit terbaru</span>
+            </div>
+            <div class="table-wrap">
+              <table class="data-table" id="auditHistoryTable">
+                <thead><tr>
+                  <th>Tanggal</th><th>Kode</th><th>Nama</th><th>Kondisi</th><th>Lokasi Baru</th><th>Catatan</th><th>Foto</th>
+                </tr></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- UPLOAD -->
+        <section class="view" id="view-upload">
+          <div class="card glass">
+            <div class="card-head">
+              <h3>Upload Data Aset</h3>
+              <span class="card-sub">Impor dari file Excel (.xls/.xlsx) atau CSV</span>
+            </div>
+            <div class="upload-zone" id="uploadZone">
+              <i data-lucide="upload-cloud"></i>
+              <p>Seret file ke sini atau <label class="link" for="fileInput">pilih file</label></p>
+              <small>Format: .xls, .xlsx, .csv — kolom: Kode Aktiva, Nama Aktiva, Nama Tipe Aktiva, No. Akun Aktiva, Harga Perolehan, Tgl Pemakaian, Tgl Pembelian, Estimasi Umur, % Rasio Depr., Metode Penyusutan</small>
+              <input type="file" id="fileInput" accept=".xls,.xlsx,.csv" hidden />
+            </div>
+            <div id="uploadPreview" class="upload-preview"></div>
+            <div id="uploadActions" class="upload-actions" style="display:none">
+              <label class="field inline">
+                <span>Mode impor:</span>
+                <select id="importMode" class="select">
+                  <option value="replace">Ganti semua data</option>
+                  <option value="append">Tambahkan (append)</option>
+                </select>
+              </label>
+              <button class="btn btn-primary" id="confirmImport"><i data-lucide="check"></i><span>Impor Sekarang</span></button>
+              <button class="btn btn-ghost" id="cancelImport">Batal</button>
+            </div>
+          </div>
+          <div class="card glass">
+            <div class="card-head"><h3>Backup & Restore</h3></div>
+            <div class="report-actions">
+              <button class="btn btn-ghost" id="backupJson"><i data-lucide="download"></i><span>Backup JSON</span></button>
+              <label class="btn btn-ghost" for="restoreJson"><i data-lucide="upload"></i><span>Restore JSON</span></label>
+              <input type="file" id="restoreJson" accept=".json" hidden />
+            </div>
+          </div>
+          <div class="card glass">
+            <div class="card-head"><h3>History Upload</h3><span class="card-sub">Pilih backup yang ingin dijadikan default</span></div>
+            <div class="history-list" id="uploadHistoryList"></div>
+          </div>
+        </section>
+
+        <!-- SETTINGS -->
+        <section class="view" id="view-settings">
+          <div class="card glass">
+            <div class="card-head"><h3>Pengaturan</h3></div>
+            <div class="settings-list">
+              <div class="setting-row">
+                <div>
+                  <div class="setting-title">Tema</div>
+                  <div class="setting-desc">Ganti tampilan gelap/terang</div>
+                </div>
+                <button class="btn btn-ghost btn-sm" id="settingsTheme">Ganti Tema</button>
+              </div>
+              <div class="setting-row">
+                <div>
+                  <div class="setting-title">Hapus Semua Data</div>
+                  <div class="setting-desc">Menghapus semua aset dari cloud Smart BARA untuk seluruh pengguna (tidak dapat dibatalkan)</div>
+                </div>
+                <button class="btn btn-danger btn-sm" id="clearAllData">Hapus Semua</button>
+              </div>
+              <div class="setting-row">
+                <div>
+                  <div class="setting-title">Muat Ulang Data Awal</div>
+                  <div class="setting-desc">Kembalikan data dari file asli ASET 30 OKTOBER 2026</div>
+                </div>
+                <button class="btn btn-ghost btn-sm" id="reloadSeed">Muat Ulang</button>
+              </div>
+              <div class="setting-row">
+                <div>
+                  <div class="setting-title">Informasi</div>
+                  <div class="setting-desc">Data aset, lokasi, format kode, dan audit tersimpan bersama di Supabase Smart BARA.</div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div id="codeFormatSettings"></div>
+          <div class="card glass">
+            <div class="card-head">
+              <h3>Pengaturan Lokasi Aset</h3>
+              <span class="card-sub">Ekstrak lokasi dari kode aset & atur mapping lokasi</span>
+            </div>
+            <div class="settings-list" style="margin-bottom:12px">
+              <div class="setting-row">
+                <div>
+                  <div class="setting-title">Ekstraksi Otomatis</div>
+                  <div class="setting-desc">Deteksi token lokasi dari kode aset dan terapkan ke aset yang belum diatur manual</div>
+                </div>
+                <button class="btn btn-primary btn-sm" id="locAutoExtract">Ekstrak & Terapkan</button>
+              </div>
+              <div class="setting-row">
+                <div>
+                  <div class="setting-title">Lokasi Token Tidak Dikenal</div>
+                  <div class="setting-desc">Terapkan lokasi ini ke aset yang tokennya belum ada di daftar mapping. Kosongkan untuk menonaktifkan.</div>
+                </div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap">
+                  <input type="text" id="locFallbackInput" class="select" placeholder="UNI Location" style="width:180px" />
+                  <button class="btn btn-ghost btn-sm" id="locFallbackApply">Simpan & Terapkan</button>
+                </div>
+              </div>
+              <div class="setting-row">
+                <div>
+                  <div class="setting-title">Tambah Mapping Lokasi</div>
+                  <div class="setting-desc">Kode token (mis. BPN) → Nama lokasi (mis. Balikpapan)</div>
+                </div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap">
+                  <input type="text" id="locTokenInput" class="select" placeholder="Kode token" style="width:120px" />
+                  <input type="text" id="locNameInput" class="select" placeholder="Nama lokasi" style="width:180px" />
+                  <button class="btn btn-ghost btn-sm" id="locAddMap">Tambah</button>
+                </div>
+              </div>
+              <div class="setting-row">
+                <div>
+                  <div class="setting-title">Hapus Semua Token Lokasi</div>
+                  <div class="setting-desc">Menghapus semua mapping token dan reset lokasi yang dipetakan</div>
+                </div>
+                <button class="btn btn-danger btn-sm" id="locDeleteAllTokens">Hapus Semua</button>
+              </div>
+            </div>
+            <div class="table-wrap" style="margin-bottom:12px">
+              <table class="data-table" id="locMapTable">
+                <thead><tr><th>Kode Token</th><th>Nama Lokasi</th><th>Jumlah Aset</th><th>Aksi</th></tr></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+            <div class="card-head" style="margin-top:10px">
+              <h3>Aset dengan Lokasi Belum Diatur</h3>
+              <span class="card-sub" id="locUnknownCount"></span>
+            </div>
+            <div class="table-wrap">
+              <table class="data-table" id="locUnknownTable">
+                <thead><tr><th>Kode</th><th>Nama Aset</th><th>Lokasi Saat Ini</th><th>Atur Lokasi</th></tr></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <!-- DETAIL MODAL -->
+  <div class="modal" id="detailModal">
+    <div class="modal-backdrop" data-close="detailModal"></div>
+    <div class="modal-dialog glass">
+      <div class="modal-head">
+        <h3>Detail Aset</h3>
+        <button class="icon-btn" data-close="detailModal"><i data-lucide="x"></i></button>
+      </div>
+      <div class="modal-body" id="detailBody"></div>
+      <div class="modal-foot">
+        <button class="btn btn-ghost" data-close="detailModal">Tutup</button>
+        <button class="btn btn-primary" id="detailEdit"><i data-lucide="edit"></i><span>Edit</span></button>
+      </div>
+    </div>
+  </div>
+
+  <!-- DRILL MODAL -->
+  <div class="modal" id="drillModal">
+    <div class="modal-backdrop" data-close="drillModal"></div>
+    <div class="modal-dialog glass" style="width:min(920px,96vw)">
+      <div class="modal-head">
+        <h3 id="drillTitle">Detail</h3>
+        <button class="icon-btn" data-close="drillModal"><i data-lucide="x"></i></button>
+      </div>
+      <div class="modal-body" id="drillBody"></div>
+      <div class="modal-foot">
+        <button class="btn btn-ghost" data-close="drillModal">Tutup</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- CODE FORMAT MODAL -->
+  <div class="modal" id="codeFormatModal">
+    <div class="modal-backdrop" data-close="codeFormatModal"></div>
+    <div class="modal-dialog glass" style="width:min(820px,96vw)">
+      <div class="modal-head">
+        <h3 id="codeFormatModalTitle">Format Kode Aset</h3>
+        <button class="icon-btn" data-close="codeFormatModal"><i data-lucide="x"></i></button>
+      </div>
+      <div class="modal-body">
+        <form id="codeFormatForm">
+          <input type="hidden" id="cfEditId" />
+          <div class="form-grid">
+            <div class="field">
+              <label>Nama Format</label>
+              <input type="text" id="cfName" required />
+            </div>
+            <div class="field">
+              <label>Kategori / Tipe (opsional)</label>
+              <input type="text" id="cfCategory" placeholder="Semua atau nama kategori" />
+            </div>
+            <div class="field">
+              <label>Min Nilai Aset</label>
+              <input type="number" id="cfMinValue" min="0" step="1" />
+            </div>
+          </div>
+          <div id="cfCategoryNumberMapWrap"></div>
+          <div id="cfSlots"></div>
+          <div class="format-preview-live" id="cfPreview">Pratinjau: -</div>
+          <div class="form-actions">
+            <button type="button" class="btn btn-ghost" data-close="codeFormatModal">Batal</button>
+            <button type="submit" class="btn btn-primary"><i data-lucide="save"></i><span>Simpan</span></button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- AUDIT MODAL -->
+  <div class="modal" id="auditModal">
+    <div class="modal-backdrop" data-close="auditModal"></div>
+    <div class="modal-dialog glass" style="width:min(720px,96vw)">
+      <div class="modal-head">
+        <h3 id="auditModalTitle">Audit Aset</h3>
+        <button class="icon-btn" data-close="auditModal"><i data-lucide="x"></i></button>
+      </div>
+      <div class="modal-body">
+        <form id="auditForm">
+          <input type="hidden" id="auditAssetId" />
+          <div class="form-grid">
+            <div class="field">
+              <label>Kode Aset</label>
+              <input type="text" id="auditKode" readonly />
+            </div>
+            <div class="field">
+              <label>Nama Aset</label>
+              <input type="text" id="auditNama" readonly />
+            </div>
+            <div class="field">
+              <label>Tanggal Audit</label>
+              <input type="date" id="auditTanggal" required />
+            </div>
+            <div class="field">
+              <label>Kondisi Aset *</label>
+              <select id="auditKondisi" class="select" required>
+                <option value="">Pilih kondisi</option>
+                <option value="Baik">Baik</option>
+                <option value="Rusak">Rusak</option>
+                <option value="Hilang">Hilang</option>
+                <option value="Pindah">Pindah Lokasi</option>
+              </select>
+            </div>
+            <div class="field" id="auditNewLocField" style="display:none">
+              <label>Lokasi Baru (jika pindah)</label>
+              <select id="auditNewLoc" class="select"></select>
+            </div>
+            <div class="field" style="grid-column:1/-1">
+              <label>Catatan Temuan</label>
+              <textarea id="auditCatatan" rows="3" placeholder="Deskripsi temuan, kerusakan, dll."></textarea>
+            </div>
+            <div class="field" style="grid-column:1/-1">
+              <label>Upload Foto Aset</label>
+              <input type="file" id="auditFoto" accept="image/*" />
+              <div id="auditFotoPreview" style="margin-top:8px"></div>
+            </div>
+          </div>
+          <div class="form-actions">
+            <button type="button" class="btn btn-ghost" data-close="auditModal">Batal</button>
+            <button type="submit" class="btn btn-primary"><i data-lucide="save"></i><span>Simpan Audit</span></button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- CONFIRM MODAL -->
+  <div class="modal" id="confirmModal">
+    <div class="modal-backdrop" data-close="confirmModal"></div>
+    <div class="modal-dialog glass small">
+      <div class="modal-head"><h3 id="confirmTitle">Konfirmasi</h3></div>
+      <div class="modal-body"><p id="confirmMsg"></p></div>
+      <div class="modal-foot">
+        <button class="btn btn-ghost" data-close="confirmModal">Batal</button>
+        <button class="btn btn-danger" id="confirmOk">Ya</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast-container" id="toastContainer"></div>
+  <div class="app-loading-overlay" id="loadingOverlay" role="status" aria-live="polite" aria-hidden="true">
+    <div class="app-loading-panel">
+      <div class="app-loading-heading">
+        <div class="app-loading-orbit" aria-hidden="true">SA</div>
+        <div>
+          <p id="smartAssetLoadingTitle" class="app-loading-title">Memproses...</p>
+          <p class="app-loading-brand">SMART ASSET · 7.10 HZ</p>
+        </div>
+      </div>
+      <p id="smartAssetLoadingDetail" class="app-loading-detail">Menyiapkan data aset...</p>
+      <div class="app-loading-track" aria-hidden="true"><span></span></div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

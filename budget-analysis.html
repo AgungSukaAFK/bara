@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Analisa Kenaikan Budget - Smart BARA 7.10 HZ</title>
+    <link rel="stylesheet" href="css/app.css?v=20261102-smooth-loading">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body class="bg-[#090d16] text-slate-100 flex h-screen overflow-hidden">
+    <aside id="appSidebar" class="w-64 glass-panel border-r border-white/10 flex flex-col z-40 fixed inset-y-0 left-0 transition-transform duration-200 lg:static lg:translate-x-0 -translate-x-full"></aside>
+    <div class="flex-1 flex flex-col min-w-0 overflow-hidden">
+        <header id="appHeader" class="glass-panel border-b border-white/10 px-6 py-3.5 flex items-center justify-between z-20"></header>
+        <main class="flex-1 overflow-y-auto p-6 space-y-6">
+            <section class="border-b border-white/10 pb-5 flex flex-col xl:flex-row xl:items-end xl:justify-between gap-5">
+                <div>
+                    <span class="badge badge-amber mb-2">Analisa per Akun</span>
+                    <h2 class="text-2xl font-black text-white m-0">Analisa Kenaikan Budget</h2>
+                    <p class="text-xs text-slate-400 mt-2 mb-0">Proyeksi akhir tahun memakai rata-rata bulanan untuk sisa bulan yang belum tercatat.</p>
+                </div>
+                <div class="flex flex-wrap items-end gap-3">
+                    <label class="text-[10px] font-bold uppercase text-slate-400">Asumsi kenaikan (%)
+                        <input id="analysisRate" type="number" min="-100" max="500" step="0.5" value="5" class="form-input mt-1 w-28 text-sm" aria-label="Persentase asumsi kenaikan">
+                    </label>
+                    <button id="analysisExportButton" type="button" onclick="BudgetAnalysisModule.exportToExcel()" class="btn btn-secondary">📤 Export Excel</button>
+                    <button id="analysisUpdateButton" type="button" onclick="BudgetAnalysisModule.update()" class="btn btn-primary">⟳ Update Analisa</button>
+                </div>
+            </section>
+
+            <section class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                <div class="glass-card border border-white/10 p-4"><p class="m-0 text-[10px] font-bold uppercase text-slate-400">Akun Dianalisa</p><p id="analysisAccountCount" class="mb-0 mt-1 text-2xl font-black text-white">0</p></div>
+                <div class="glass-card border border-white/10 p-4"><p class="m-0 text-[10px] font-bold uppercase text-slate-400">Aktual Tercatat</p><p id="analysisActualTotal" class="mb-0 mt-1 text-xl font-black text-teal-300">Rp 0</p></div>
+                <div class="glass-card border border-white/10 p-4"><p class="m-0 text-[10px] font-bold uppercase text-slate-400">Estimasi Akhir Tahun</p><p id="analysisForecastTotal" class="mb-0 mt-1 text-xl font-black text-amber-300">Rp 0</p></div>
+                <div class="glass-card border border-white/10 p-4"><p class="m-0 text-[10px] font-bold uppercase text-slate-400">Rencana + Asumsi</p><p id="analysisAdjustedTotal" class="mb-0 mt-1 text-xl font-black text-sky-300">Rp 0</p></div>
+            </section>
+
+            <section class="glass-panel overflow-hidden border border-white/10">
+                <div class="flex items-center justify-between gap-3 border-b border-white/10 p-4">
+                    <input id="analysisSearch" type="search" oninput="BudgetAnalysisModule.render()" placeholder="Cari akun atau departemen..." class="form-input w-full max-w-sm">
+                    <span id="analysisStatus" class="text-right text-xs text-slate-400">Memuat data periode...</span>
+                </div>
+                <div class="max-h-[68vh] overflow-auto">
+                    <table class="app-table">
+                        <thead class="sticky top-0 z-10 bg-slate-900">
+                            <tr>
+                                <th>Nama Akun</th><th>Dept</th><th class="text-right">Aktual</th><th class="text-center">Bulan Tercatat</th>
+                                <th class="text-right">Rata-rata / Bulan</th><th class="text-right">Estimasi Akhir Tahun</th>
+                                <th class="text-right">Proyeksi + Asumsi</th><th class="text-center">Berita</th>
+                            </tr>
+                        </thead>
+                        <tbody id="analysisTableBody" class="divide-y divide-white/5"></tbody>
+                    </table>
+                </div>
+            </section>
+        </main>
+    </div>
+    <script src="js/config.js?v=20261105-goa"></script>
+    <script src="js/utils/formatters.js?v=upload-safety-1"></script>
+    <script src="js/core.js?v=20261105-goa"></script>
+    <script src="js/modules/upload.js?v=20261104-budget-ytd-range-fix"></script>
+    <script src="js/layout.js?v=20261102-upload-preview-wide"></script>
+    <script src="js/modules/budget-analysis.js?v=20261102-analysis-export"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', async () => {
+            await window.SmartBaraCore.init();
+            await window.SmartBaraLayout.init('budget-analysis');
+            await window.BudgetAnalysisModule.init();
+        });
+    </script>
+</body>
+</html>

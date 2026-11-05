@@ -1,0 +1,617 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard Utama - Smart BARA 7.10 HZ</title>
+    <link rel="stylesheet" href="css/app.css?v=20261102-smooth-loading">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body class="bg-[#090d16] text-slate-100 flex h-screen overflow-hidden">
+
+    <!-- Sidebar Navigation -->
+    <aside id="appSidebar" class="w-64 glass-panel border-r border-white/10 flex flex-col z-40 fixed inset-y-0 left-0 transition-transform duration-200 lg:static lg:translate-x-0 -translate-x-full">
+    </aside>
+
+    <!-- Main Content Area -->
+    <div class="flex-1 flex flex-col min-w-0 overflow-hidden">
+        <!-- Top Navigation Header -->
+        <header id="appHeader" class="glass-panel border-b border-white/10 px-6 py-3.5 flex items-center justify-between z-20">
+            <span id="globalSyncPill" class="ml-4 hidden"></span>
+        </header>
+
+        <!-- Page View Body -->
+        <main class="flex-1 overflow-y-auto p-6 space-y-6">
+            <!-- Tombol Toggle Panel Admin (Selalu Terlihat) -->
+            <div class="glass-panel rounded-xl border border-white/10 p-4 flex items-center justify-between shadow-xl">
+                <div>
+                    <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider m-0">Panel Admin & Backup</h3>
+                    <p class="mt-0.5 text-[11px] text-slate-400">Klik tombol di bawah untuk menampilkan atau menyembunyikan panel sinkronisasi, backup, dan template budget.</p>
+                </div>
+                <button type="button" onclick="toggleAllPanels()" id="btnToggleAllPanels" class="btn btn-primary whitespace-nowrap px-4 py-2" style="position: relative !important; z-index: 99999 !important; pointer-events: auto !important;">👁️ Tampilkan Panel Admin</button>
+            </div>
+
+            <!-- Aksi Sinkronisasi Seluruh Data (Paling Atas) -->
+            <div class="collapsible-panel" id="panel-sinkronisasi" style="display: none;">
+                <div class="panel-header" onclick="togglePanel('panel-sinkronisasi', this)">
+                    <span class="panel-toggle">▶</span>
+                    <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider m-0">Sinkronisasi Data ke Cloud</h3>
+                    <span class="panel-status ml-auto text-[10px] text-slate-500">Klik header untuk sembunyikan</span>
+                </div>
+                <div class="panel-content">
+                    <div class="glass-panel rounded-xl border border-white/10 p-4 flex items-center justify-between shadow-xl">
+                        <div>
+                            <h4 class="text-xs font-bold text-slate-400 uppercase tracking-wider m-0">Upload seluruh data periode aktif</h4>
+                            <p class="mt-0.5 text-[11px] text-slate-400">Transaksi, rekonsil, budget, dan meta akan diunggah ke Supabase agar terbaca di browser lain.</p>
+                        </div>
+                        <button type="button" data-action="syncToCloudManual" class="btn btn-primary whitespace-nowrap px-4 py-2" style="position: relative !important; z-index: 99999 !important; pointer-events: auto !important;">🔄 Sinkronisasi Seluruh Data</button>
+                        <span id="rekonsilStatusText" class="ml-2 text-[11px] font-semibold text-slate-400"></span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Backup & Restore File Management -->
+            <div class="collapsible-panel" id="panel-backup" style="display: none;">
+                <div class="panel-header" onclick="togglePanel('panel-backup', this)">
+                    <span class="panel-toggle">▶</span>
+                    <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider m-0">Manajemen File Backup</h3>
+                    <span class="panel-status ml-auto text-[10px] text-slate-500">Klik header untuk sembunyikan</span>
+                </div>
+                <div class="panel-content">
+                    <div class="glass-panel rounded-xl border border-white/10 p-4 flex flex-wrap items-center justify-between gap-3 shadow-xl">
+                        <div>
+                            <h4 class="text-xs font-bold text-slate-400 uppercase tracking-wider m-0">Cadangan & Pemulihan Data</h4>
+                            <p class="mt-0.5 text-[11px] text-slate-400">Unduh seluruh data periode sebagai file JSON untuk cadangan, atau unggah kembali untuk memulihkan data.</p>
+                        </div>
+                        <div class="flex flex-wrap gap-2">
+                            <button type="button" data-action="downloadBackupPeriod" class="btn btn-secondary whitespace-nowrap px-4 py-2" style="position: relative !important; z-index: 99999 !important; pointer-events: auto !important;">📥 Unduh Backup</button>
+                            <button type="button" data-action="uploadBackupPeriod" class="btn btn-primary whitespace-nowrap px-4 py-2" style="position: relative !important; z-index: 99999 !important; pointer-events: auto !important;">📤 Unggah Backup</button>
+                            <input type="file" id="backupFileInput" accept=".json" style="display: none;">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Budget Template Management -->
+            <div class="collapsible-panel" id="panel-budget" style="display: none;">
+                <div class="panel-header" onclick="togglePanel('panel-budget', this)">
+                    <span class="panel-toggle">▶</span>
+                    <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider m-0">Template Budget</h3>
+                    <span class="panel-status ml-auto text-[10px] text-slate-500">Klik header untuk sembunyikan</span>
+                </div>
+                <div class="panel-content">
+                    <div class="glass-panel rounded-xl border border-white/10 p-4 flex flex-wrap items-center justify-between gap-3 shadow-xl">
+                        <div>
+                            <h4 class="text-xs font-bold text-slate-400 uppercase tracking-wider m-0">Template Budget Excel</h4>
+                            <p class="mt-0.5 text-[11px] text-slate-400">Unduh template budget periode aktif ke Excel, atau unggah budget dari file template.</p>
+                        </div>
+                        <div class="flex flex-wrap gap-2">
+                            <button type="button" data-action="downloadBudgetTemplate" class="btn btn-secondary whitespace-nowrap px-4 py-2" style="position: relative !important; z-index: 99999 !important; pointer-events: auto !important;">📥 Unduh Template</button>
+                            <button type="button" data-action="uploadBudgetTemplate" class="btn btn-primary whitespace-nowrap px-4 py-2" style="position: relative !important; z-index: 99999 !important; pointer-events: auto !important;">📤 Unggah Template</button>
+                            <input type="file" id="budgetFileInput" accept=".xlsx,.xls" style="display: none;">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Hero Welcome Card -->
+            <div class="glass-panel rounded-2xl p-6 border border-white/10 bg-gradient-to-r from-slate-900 via-slate-900/90 to-teal-950/40 shadow-2xl relative overflow-hidden">
+                <div class="relative z-10 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                    <div>
+                        <span class="badge badge-teal mb-2">Sistem Konsolidasi V7.10 HZ</span>
+                        <h1 class="text-2xl lg:text-3xl font-black text-white tracking-tight m-0">Selamat Datang di Smart BARA</h1>
+                        <p class="text-xs text-slate-300 mt-2 max-w-xl leading-relaxed m-0">
+                            Aplikasi konsolidasi keuangan, rekonsiliasi multi-departemen, monitoring aset, dan perencanaan anggaran terintegrasi secara realtime.
+                        </p>
+                    </div>
+                    <div class="flex flex-wrap gap-2.5">
+                        <a href="rekonsil.html" class="btn btn-secondary">⚖️ Buka Rekonsil</a>
+                        <a href="budget-creator.html" class="btn btn-primary">🛒 Budget Creator</a>
+                        <button id="dashboardPresentasiLiveBtn" type="button" class="btn btn-secondary">📊 Presentasi Live</button>
+                        <button id="dashboardExportPptBtn" type="button" class="btn btn-primary">📤 Export PPT</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4 dashboard-overview-grid">
+                <div class="glass-card rounded-2xl border border-white/10 p-4 dashboard-stat-card dashboard-overview-card" data-metric="data-health">
+                    <div class="flex items-center justify-between">
+                        <span class="text-[10px] font-bold uppercase tracking-wider text-slate-400">Data Health</span>
+                        <span class="badge badge-emerald text-[10px]" id="dashHealthState">Memuat...</span>
+                    </div>
+                    <p class="mt-3 text-2xl font-black text-white tabular-nums" id="dashHealthScore">...</p>
+                    <p class="mt-1 text-[11px] text-slate-400" id="dashDataQuality">Memuat data periode...</p>
+                </div>
+                <div class="glass-card rounded-2xl border border-white/10 p-4 dashboard-overview-card" data-metric="departments-active">
+                    <div class="flex items-center justify-between">
+                        <span class="text-[10px] font-bold uppercase tracking-wider text-slate-400">Departemen Aktif</span>
+                        <span class="text-sm text-teal-300">📍</span>
+                    </div>
+                    <p class="mt-3 text-2xl font-black text-white tabular-nums" id="dashActiveDepts">...</p>
+                    <p class="mt-1 text-[11px] text-slate-400">filter departemen saat ini</p>
+                </div>
+                <div class="glass-card rounded-2xl border border-white/10 p-4 dashboard-overview-card" data-metric="transactions-count">
+                    <div class="flex items-center justify-between">
+                        <span class="text-[10px] font-bold uppercase tracking-wider text-slate-400">Transaksi Tercatat</span>
+                        <span class="text-sm text-sky-300">📊</span>
+                    </div>
+                    <p class="mt-3 text-2xl font-black text-white tabular-nums" id="dashTransactionsCount">...</p>
+                    <p class="mt-1 text-[11px] text-slate-400">data periode aktif</p>
+                </div>
+                <div class="glass-card rounded-2xl border border-white/10 p-4 dashboard-overview-card" data-metric="sync-status">
+                    <div class="flex items-center justify-between">
+                        <span class="text-[10px] font-bold uppercase tracking-wider text-slate-400">Sinkronisasi</span>
+                        <span class="text-sm text-violet-300">🔄</span>
+                    </div>
+                    <p class="mt-3 text-lg font-black text-white" id="dashLastSync">Memuat...</p>
+                    <p class="mt-1 text-[11px] text-slate-400">terakhir sinkron data</p>
+                </div>
+                <div class="glass-card rounded-2xl border border-white/10 p-4 approval-card dashboard-overview-card" data-metric="approval-status">
+                    <div class="flex items-center justify-between">
+                        <span class="text-[10px] font-bold uppercase tracking-wider text-slate-400">Approval</span>
+                        <span class="badge badge-amber text-[10px]" id="dashApprovalBadge">Pending</span>
+                    </div>
+                    <p class="mt-3 text-lg font-black text-white" id="dashApprovalStatus">Belum disetujui</p>
+                    <p class="mt-1 text-[11px] text-slate-400" id="dashApprovalMeta">Semua Superadmin punya akses di semua departemen</p>
+                    <div class="approval-actions mt-3 flex gap-2">
+                        <button id="dashApprovalAction" type="button" class="btn btn-primary flex-1 text-[9px] px-2 py-2 hidden">✅ Approve</button>
+                        <button id="dashRejectApprovalAction" type="button" class="btn btn-danger flex-1 text-[9px] px-2 py-2 hidden">❌ Reject</button>
+                        <button id="dashBulkApproveButton" type="button" class="btn btn-secondary flex-1 text-[9px] px-2 py-2 hidden">✅ Semua</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Key Metrics Overview -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-5 dashboard-metrics-grid">
+                <a href="budget-plan.html" data-metric="budget-plan" class="metric-card glass-card rounded-2xl p-5 border border-white/10 flex flex-col justify-between block no-underline text-inherit transition hover:border-emerald-500/60 cursor-pointer">
+                    <div>
+                        <div class="flex items-center justify-between">
+                            <span class="text-xs font-bold text-slate-400 uppercase tracking-wider">Budget Plan Akun</span>
+                            <span class="text-base">💰</span>
+                        </div>
+                        <p class="text-[10px] font-bold text-slate-400 uppercase mt-3 mb-0">Plafon Anggaran 12 Bulan</p>
+                        <p class="text-xl font-black text-emerald-400 mt-1 mb-0 stat-value tabular-nums break-words" id="dashBudgetTotal">Memuat...</p>
+                    </div>
+                    <div class="mt-4 pt-3 border-t border-white/10 flex items-center justify-between">
+                        <span class="text-xs text-slate-400">Akun unik budget</span>
+                        <span class="text-sm font-bold text-white tabular-nums" id="dashBudgetCount">...</span>
+                    </div>
+                </a>
+
+                <a href="rekonsil.html" data-metric="finance" class="metric-card glass-card rounded-2xl p-5 border border-white/10 flex flex-col justify-between block no-underline text-inherit transition hover:border-sky-500/60 cursor-pointer">
+                    <div>
+                        <div class="flex items-center justify-between">
+                            <span class="text-xs font-bold text-slate-400 uppercase tracking-wider">Data dari Finance</span>
+                            <span class="text-base">💹</span>
+                        </div>
+                        <p class="text-[10px] font-bold text-slate-400 uppercase mt-3 mb-0">Debit - Kredit</p>
+                        <p class="text-xl font-black text-sky-400 mt-1 mb-0 stat-value tabular-nums break-words" id="dashFinanceTotal">Memuat...</p>
+                    </div>
+                    <div class="mt-4 pt-3 border-t border-white/10 flex items-center justify-between">
+                        <span class="text-xs text-slate-400">Sumber nilai</span>
+                        <span class="text-xs font-extrabold text-sky-400">Finance</span>
+                    </div>
+                </a>
+
+                <a href="rekonsil.html" data-metric="reconcile" class="metric-card glass-card rounded-2xl p-5 border border-white/10 flex flex-col justify-between block no-underline text-inherit transition hover:border-teal-500/60 cursor-pointer">
+                    <div>
+                        <div class="flex items-center justify-between">
+                            <span class="text-xs font-bold text-slate-400 uppercase tracking-wider">Total Rekonsiliasi</span>
+                            <span class="text-base">⚖️</span>
+                        </div>
+                        <p class="text-[10px] font-bold text-slate-400 uppercase mt-3 mb-0">Nilai rekonsil + penyesuaian</p>
+                        <p class="text-xl font-black text-teal-400 mt-1 mb-0 stat-value tabular-nums break-words" id="dashReconcileTotal">Memuat...</p>
+                    </div>
+                    <div class="mt-4 pt-3 border-t border-white/10 flex items-center justify-between">
+                        <span class="text-xs text-slate-400">Sumber nilai</span>
+                        <span class="text-xs font-extrabold text-teal-400">Rekonsil Manual</span>
+                    </div>
+                </a>
+
+                <a href="rekonsil.html" data-metric="variance" class="metric-card glass-card rounded-2xl p-5 border border-white/10 flex flex-col justify-between block no-underline text-inherit transition hover:border-amber-500/60 cursor-pointer">
+                    <div>
+                        <div class="flex items-center justify-between">
+                            <span class="text-xs font-bold text-slate-400 uppercase tracking-wider">Selisih Rekonsiliasi</span>
+                            <span class="text-base">⚖️</span>
+                        </div>
+                        <p class="text-[10px] font-bold text-slate-400 uppercase mt-3 mb-0">Selisih finance dan rekonsil</p>
+                        <p class="text-xl font-black text-amber-400 mt-1 mb-0 stat-value tabular-nums break-words" id="dashSelisihTotal">Memuat...</p>
+                    </div>
+                    <div class="mt-4 pt-3 border-t border-white/10 flex items-center justify-between">
+                        <span class="text-xs text-slate-400">Status Saldo</span>
+                        <span class="badge badge-amber">Perlu Rekonsil</span>
+                    </div>
+                </a>
+
+                <a href="budget-creator.html" data-metric="creator" class="metric-card glass-card rounded-2xl p-5 border border-white/10 flex flex-col justify-between block no-underline text-inherit transition hover:border-teal-500/60 cursor-pointer">
+                    <div>
+                        <div class="flex items-center justify-between">
+                            <span class="text-xs font-bold text-slate-400 uppercase tracking-wider">Budget Creator Planning</span>
+                            <span class="text-base">🛒</span>
+                        </div>
+                        <p class="text-[10px] font-bold text-slate-400 uppercase mt-3 mb-0">Total Nilai Kebutuhan</p>
+                        <p class="text-xl font-black text-teal-400 mt-1 mb-0 stat-value tabular-nums break-words" id="dashCreatorTotal">Memuat...</p>
+                    </div>
+                    <div class="mt-4 pt-3 border-t border-white/10 flex items-center justify-between">
+                        <span class="text-xs text-slate-400">Total akun</span>
+                        <span class="text-sm font-bold text-white tabular-nums" id="dashCreatorCount">...</span>
+                    </div>
+                </a>
+
+                <a href="budget-analysis.html" data-metric="prediction" class="metric-card glass-card rounded-2xl p-5 border border-white/10 flex flex-col justify-between block no-underline text-inherit transition hover:border-cyan-500/60 cursor-pointer">
+                    <div>
+                        <div class="flex items-center justify-between">
+                            <span class="text-xs font-bold text-slate-400 uppercase tracking-wider">Budget Prediksi Tahun Berjalan</span>
+                            <span class="text-base">📈</span>
+                        </div>
+                        <p class="text-[10px] font-bold text-slate-400 uppercase mt-3 mb-0">Prediksi akhir tahun</p>
+                        <p class="text-xl font-black text-cyan-400 mt-1 mb-0 stat-value tabular-nums break-words" id="dashPredictionTotal">Memuat...</p>
+                    </div>
+                    <div class="mt-4 pt-3 border-t border-white/10 flex items-center justify-between">
+                        <span class="text-xs text-slate-400">Akun unik prediksi</span>
+                        <span class="text-sm font-bold text-white tabular-nums" id="dashPredictionCount">...</span>
+                    </div>
+                </a>
+
+                <a href="budget-analysis.html" data-metric="reconcile-change" class="metric-card glass-card rounded-2xl p-5 border border-white/10 flex flex-col justify-between block no-underline text-inherit transition hover:border-amber-500/60 cursor-pointer">
+                    <div>
+                        <div class="flex items-center justify-between">
+                            <span class="text-xs font-bold text-slate-400 uppercase tracking-wider">Kenaikan vs Rekonsil</span>
+                            <span class="text-base">📊</span>
+                        </div>
+                        <p class="text-[10px] font-bold text-slate-400 uppercase mt-3 mb-0">Prediksi Budget Tahun Berjalan</p>
+                        <p class="text-xl font-black text-amber-400 mt-1 mb-0 stat-value tabular-nums break-words" id="dashDeltaReconcileValue">Memuat...</p>
+                    </div>
+                    <div class="mt-4 pt-3 border-t border-white/10 flex items-center justify-between">
+                        <span class="text-xs text-slate-400">Rasio vs Rekonsil</span>
+                        <span class="text-xs font-extrabold text-amber-300" id="dashDeltaReconcileTrend">...</span>
+                    </div>
+                </a>
+
+                <a href="budget-analysis.html" data-metric="plan-change" class="metric-card glass-card rounded-2xl p-5 border border-white/10 flex flex-col justify-between block no-underline text-inherit transition hover:border-violet-500/60 cursor-pointer">
+                    <div>
+                        <div class="flex items-center justify-between">
+                            <span class="text-xs font-bold text-slate-400 uppercase tracking-wider">Kenaikan Budget Plan</span>
+                            <span class="text-base">📈</span>
+                        </div>
+                        <p class="text-[10px] font-bold text-slate-400 uppercase mt-3 mb-0">vs Anggaran Masa Depan</p>
+                        <p class="text-xl font-black text-violet-400 mt-1 mb-0 stat-value tabular-nums break-words" id="dashDeltaFutureValue">Memuat...</p>
+                    </div>
+                    <div class="mt-4 pt-3 border-t border-white/10 flex items-center justify-between">
+                        <span class="text-xs text-slate-400">Selisih terhadap target</span>
+                        <span class="text-xs font-extrabold text-violet-300" id="dashDeltaFutureTrend">...</span>
+                    </div>
+                </a>
+
+                <a href="budget-future.html" data-metric="future" class="metric-card glass-card rounded-2xl p-5 border border-white/10 flex flex-col justify-between block no-underline text-inherit transition hover:border-cyan-500/60 cursor-pointer">
+                    <div>
+                        <div class="flex items-center justify-between">
+                            <span class="text-xs font-bold text-slate-400 uppercase tracking-wider">Anggaran Masa Depan</span>
+                            <span class="text-base">📈</span>
+                        </div>
+                        <p class="text-[10px] font-bold text-slate-400 uppercase mt-3 mb-0">Total Rencana 12 Bulan</p>
+                        <p class="text-xl font-black text-cyan-400 mt-1 mb-0 stat-value tabular-nums break-words" id="dashFutureBudgetTotal">Memuat...</p>
+                    </div>
+                    <div class="mt-4 pt-3 border-t border-white/10 flex items-center justify-between">
+                        <span class="text-xs text-slate-400">Akun unik GA</span>
+                        <span class="text-sm font-bold text-white tabular-nums" id="dashFutureBudgetCount">...</span>
+                    </div>
+                </a>
+
+                <a href="budget-analysis.html" data-metric="plan-growth-percent" class="metric-card glass-card rounded-2xl p-5 border border-white/10 flex flex-col justify-between block no-underline text-inherit transition hover:border-violet-500/60 cursor-pointer">
+                    <div>
+                        <div class="flex items-center justify-between">
+                            <span class="text-xs font-bold text-slate-400 uppercase tracking-wider">Persentase Kenaikan</span>
+                            <span class="text-base">📊</span>
+                        </div>
+                        <p class="text-[10px] font-bold text-slate-400 uppercase mt-3 mb-0">Budget Plan ke Anggaran Masa Depan</p>
+                        <p class="text-xl font-black text-violet-300 mt-1 mb-0 stat-value tabular-nums break-words" id="dashPlanGrowthPercent">...</p>
+                    </div>
+                    <div class="mt-4 pt-3 border-t border-white/10 flex items-center justify-between">
+                        <span class="text-xs text-slate-400">Trend</span>
+                        <span class="text-xs font-extrabold text-violet-300" id="dashPlanGrowthTrend">...</span>
+                    </div>
+                </a>
+            </div>
+
+            <div id="dashboardMetricModal" class="hidden fixed inset-0 z-[9000] flex items-center justify-center bg-slate-950/80 p-4">
+                <div id="dashboardMetricPanel" class="w-full max-w-xl rounded-2xl border border-white/10 bg-slate-900 p-5 shadow-2xl">
+                    <div class="flex items-center justify-between border-b border-white/10 pb-3">
+                        <h3 id="dashboardMetricTitle" class="m-0 text-base font-black text-white">Detail indikator</h3>
+                        <button type="button" id="dashboardMetricClose" class="text-slate-400 hover:text-white text-xl">✕</button>
+                    </div>
+                    <div id="dashboardMetricBody" class="mt-4 max-h-[70vh] space-y-2 overflow-y-auto pr-1 text-sm text-slate-200"></div>
+                </div>
+            </div>
+
+            <div id="dashboardPresentationModal" class="hidden fixed inset-0 z-[9100] bg-slate-950/85 backdrop-blur-sm p-4 sm:p-6">
+                <div class="mx-auto flex h-full max-w-6xl flex-col rounded-3xl border border-white/10 bg-slate-900 shadow-2xl">
+                    <div class="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-4 py-3 sm:px-6">
+                        <div>
+                            <p class="m-0 text-[10px] font-bold uppercase tracking-[0.22em] text-teal-300">Executive briefing</p>
+                            <h3 class="m-0 text-base font-black text-white">Smart BARA · Presentasi Live</h3>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <button type="button" id="dashboardPresentationPrev" class="btn btn-secondary text-[10px] px-3 py-2" aria-label="Slide sebelumnya" title="Slide sebelumnya">←</button>
+                            <span id="dashboardPresentationCounter" class="min-w-[4.5rem] text-center text-[10px] font-bold tabular-nums text-slate-400" aria-live="polite"></span>
+                            <button type="button" id="dashboardPresentationNext" class="btn btn-primary text-[10px] px-3 py-2" aria-label="Slide selanjutnya" title="Slide selanjutnya">→</button>
+                            <button type="button" id="dashboardPresentationFullscreen" class="btn btn-secondary text-lg px-2 py-1" aria-label="Masuk layar penuh" title="Masuk layar penuh">⛶</button>
+                            <button type="button" id="dashboardPresentationClose" class="text-slate-300 hover:text-white text-xl leading-none">✕</button>
+                        </div>
+                    </div>
+                    <div class="flex-1 overflow-auto p-4 sm:p-6">
+                        <div id="dashboardPresentationDeck" class="mx-auto max-w-5xl"></div>
+                    </div>
+                </div>
+            </div>
+
+            <section class="space-y-3">
+                <div>
+                    <h3 class="text-xs font-bold text-slate-400 uppercase tracking-widest m-0">Analisa Top 10</h3>
+                    <p class="mt-1 mb-0 text-[11px] text-slate-500">Berdasarkan periode dan departemen yang sedang dipilih.</p>
+                </div>
+                <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                    <article class="glass-panel rounded-xl border border-white/10 p-4">
+                        <h4 class="m-0 text-xs font-bold uppercase text-emerald-300">Budget Terbesar</h4>
+                        <ol id="dashTopBudget" class="mt-3 space-y-2"></ol>
+                    </article>
+                    <article class="glass-panel rounded-xl border border-white/10 p-4">
+                        <h4 class="m-0 text-xs font-bold uppercase text-sky-300">Realisasi Finance Terbesar</h4>
+                        <ol id="dashTopFinance" class="mt-3 space-y-2"></ol>
+                    </article>
+                    <article class="glass-panel rounded-xl border border-white/10 p-4">
+                        <h4 class="m-0 text-xs font-bold uppercase text-teal-300">Rekonsil Terbesar</h4>
+                        <ol id="dashTopReconcile" class="mt-3 space-y-2"></ol>
+                    </article>
+                    <article class="glass-panel rounded-xl border border-white/10 p-4">
+                        <h4 class="m-0 text-xs font-bold uppercase text-amber-300">Selisih Terbesar</h4>
+                        <ol id="dashTopVariance" class="mt-3 space-y-2"></ol>
+                    </article>
+                </div>
+            </section>
+
+            <section class="glass-panel rounded-xl border border-white/10 p-4">
+                <div class="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                        <h3 class="m-0 text-xs font-bold uppercase text-slate-300">Analisa AI Dashboard</h3>
+                        <p id="dashAiAnalysisStatus" class="m-0 mt-1 text-[11px] text-slate-500">Ringkasan AI memakai provider yang diatur pada Pengaturan AI Budget.</p>
+                    </div>
+                    <button id="dashAiAnalysisButton" type="button" onclick="DashboardModule.analyzeWithAI()" class="btn btn-secondary text-xs">✨ Analisa AI</button>
+                </div>
+                <div id="dashAiAnalysis" class="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-300"></div>
+            </section>
+
+            <!-- Quick Navigation Modules -->
+            <div class="space-y-3">
+                <h3 class="text-xs font-bold text-slate-400 uppercase tracking-widest m-0">Modul & Navigasi Cepat</h3>
+                <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+                    <a href="rekonsil.html" class="glass-card p-4 rounded-xl border border-white/10 hover:border-teal-500/50 block group no-underline text-inherit">
+                        <div class="w-8 h-8 rounded-lg bg-teal-500/20 text-teal-300 flex items-center justify-center text-sm font-bold mb-2">⚖️</div>
+                        <h4 class="text-sm font-bold text-white m-0 group-hover:text-teal-300 transition">Rekonsil Anggaran</h4>
+                        <p class="text-xs text-slate-400 mt-1 m-0">Pencocokan finance, rekonsil manual, dan selisih transaksi.</p>
+                    </a>
+                    <a href="budget-creator.html" class="glass-card p-4 rounded-xl border border-teal-500/30 hover:border-teal-500 block group no-underline text-inherit shadow-lg shadow-teal-500/5">
+                        <div class="w-8 h-8 rounded-lg bg-teal-500/20 text-teal-300 flex items-center justify-center text-sm font-bold mb-2">🛒</div>
+                        <h4 class="text-sm font-bold text-teal-300 m-0">Budget Creator</h4>
+                        <p class="text-xs text-slate-400 mt-1 m-0">Template Excel combobox opsi DB & import kebutuhan.</p>
+                    </a>
+                    <a href="budget-plan.html" class="glass-card p-4 rounded-xl border border-white/10 hover:border-teal-500/50 block group no-underline text-inherit">
+                        <div class="w-8 h-8 rounded-lg bg-emerald-500/20 text-emerald-300 flex items-center justify-center text-sm font-bold mb-2">💰</div>
+                        <h4 class="text-sm font-bold text-white m-0 group-hover:text-emerald-300 transition">Budget Plan Akun</h4>
+                        <p class="text-xs text-slate-400 mt-1 m-0">Matriks plafon anggaran 12 bulan per akun induk.</p>
+                    </a>
+                    <a href="budget-analysis.html" class="glass-card p-4 rounded-xl border border-white/10 hover:border-teal-500/50 block group no-underline text-inherit">
+                        <div class="w-8 h-8 rounded-lg bg-amber-500/20 text-amber-300 flex items-center justify-center text-sm font-bold mb-2">📈</div>
+                        <h4 class="text-sm font-bold text-white m-0 group-hover:text-amber-300 transition">Analisa Kenaikan Budget</h4>
+                        <p class="text-xs text-slate-400 mt-1 m-0">Proyeksi kenaikan anggaran aktual per akun.</p>
+                    </a>
+                    <a href="budget-future.html" class="glass-card p-4 rounded-xl border border-white/10 hover:border-cyan-500/50 block group no-underline text-inherit">
+                        <div class="w-8 h-8 rounded-lg bg-cyan-500/20 text-cyan-300 flex items-center justify-center text-sm font-bold mb-2">📈</div>
+                        <h4 class="text-sm font-bold text-white m-0 group-hover:text-cyan-300 transition">Anggaran Masa Depan</h4>
+                        <p class="text-xs text-slate-400 mt-1 m-0">Forecast 12 bulan dan skenario kenaikan anggaran.</p>
+                    </a>
+                    <a href="pov-akun.html" class="glass-card p-4 rounded-xl border border-white/10 hover:border-teal-500/50 block group no-underline text-inherit">
+                        <div class="w-8 h-8 rounded-lg bg-slate-700 text-white flex items-center justify-center text-sm font-bold mb-2">📑</div>
+                        <h4 class="text-sm font-bold text-white m-0">POV Akun Induk</h4>
+                        <p class="text-xs text-slate-400 mt-1 m-0">Hierarki rekonsiliasi akun & transaksi detail.</p>
+                    </a>
+                    <a href="pov-proyek.html" class="glass-card p-4 rounded-xl border border-white/10 hover:border-teal-500/50 block group no-underline text-inherit">
+                        <div class="w-8 h-8 rounded-lg bg-slate-700 text-white flex items-center justify-center text-sm font-bold mb-2">🏗️</div>
+                        <h4 class="text-sm font-bold text-white m-0">POV Proyek UP</h4>
+                        <p class="text-xs text-slate-400 mt-1 m-0">Hierarki alokasi per proyek unit pelaksana.</p>
+                    </a>
+                    <a href="smart-asset-project/index.html" class="glass-card p-4 rounded-xl border border-white/10 hover:border-teal-500/50 block group no-underline text-inherit">
+                        <div class="w-8 h-8 rounded-lg bg-amber-500/20 text-amber-300 flex items-center justify-center text-sm font-bold mb-2">🏢</div>
+                        <h4 class="text-sm font-bold text-white m-0">Asset Monitoring</h4>
+                        <p class="text-xs text-slate-400 mt-1 m-0">Rekap dan pelacakan aset dengan threshold nilai.</p>
+                    </a>
+                    <a href="monthly.html" class="glass-card p-4 rounded-xl border border-white/10 hover:border-teal-500/50 block group no-underline text-inherit">
+                        <div class="w-8 h-8 rounded-lg bg-rose-500/20 text-rose-300 flex items-center justify-center text-sm font-bold mb-2">📅</div>
+                        <h4 class="text-sm font-bold text-white m-0">Monthly Report</h4>
+                        <p class="text-xs text-slate-400 mt-1 m-0">Laporan bulanan dinamis dan visualisasi arus kas.</p>
+                    </a>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Scripts: Load order matters (config → formatters → core → modules → layout → page) -->
+    <script src="js/config.js?v=20261105-goa"></script>
+    <script src="js/utils/formatters.js?v=20261101-final-complete-approval"></script>
+    <script src="js/core.js?v=20261105-goa"></script>
+    <script src="js/modules/upload.js?v=20261104-budget-ytd-range-fix"></script>
+    <script src="js/layout.js?v=20261102-smart-asset-cloud"></script>
+    <script src="js/modules/ai-settings.js?v=20261101-final-complete-approval"></script>
+    <script src="js/modules/dashboard.js?v=20261104-dashboard-dept-catalog-rollback"></script>
+    <script src="js/modules/rekonsil.js?v=20261102-history-effective-original-value"></script>
+    <script src="js/modules/budget.js?v=20261104-budget-template"></script>
+    <script>
+        // Lepas overlay loading yang macet (z-index 9999 bisa menutupi tombol)
+        document.addEventListener('DOMContentLoaded', () => {
+            const stuck = document.getElementById('appLoadingOverlay');
+            if (stuck) {
+                stuck.classList.remove('is-visible');
+                stuck.setAttribute('aria-hidden', 'true');
+                stuck.style.opacity = '0';
+                stuck.style.visibility = 'hidden';
+            }
+
+            setTimeout(() => {
+                if (!window.RekonsilModule && !window.BudgetModule) {
+                    console.error('RekonsilModule dan BudgetModule belum tersedia di window!');
+                    document.querySelectorAll('[data-action]').forEach(el => {
+                        el.title = 'Modul belum dimuat. Refresh halaman.';
+                        el.style.opacity = '0.5';
+                    });
+                    return;
+                }
+                if (window.RekonsilModule) console.log('RekonsilModule OK:', Object.keys(window.RekonsilModule).join(', '));
+                if (window.BudgetModule) console.log('BudgetModule OK:', Object.keys(window.BudgetModule).join(', '));
+
+                // Event listener delegasi untuk semua tombol aksi
+                document.body.addEventListener('click', (e) => {
+                    const btn = e.target.closest('[data-action]');
+                    if (!btn) return;
+                    e.preventDefault();
+                    e.stopPropagation();
+
+                    const action = btn.getAttribute('data-action');
+                    console.log('Tombol diklik:', action);
+
+                    try {
+                        if (action === 'uploadBackupPeriod') {
+                            const input = document.getElementById('backupFileInput');
+                            console.log('Input file:', input, 'files:', input?.files?.length);
+                            if (input) {
+                                input.value = '';
+                                input.click();
+                            } else {
+                                alert('Input file backup tidak ditemukan.');
+                            }
+                        } else if (action === 'uploadBudgetTemplate') {
+                            const input = document.getElementById('budgetFileInput');
+                            console.log('Input budget file:', input, 'files:', input?.files?.length);
+                            if (input) {
+                                input.value = '';
+                                input.click();
+                            } else {
+                                alert('Input file budget tidak ditemukan.');
+                            }
+                        } else if (window.RekonsilModule && window.RekonsilModule[action]) {
+                            window.RekonsilModule[action]();
+                        } else if (window.BudgetModule && window.BudgetModule[action]) {
+                            window.BudgetModule[action]();
+                        } else {
+                            console.error('Fungsi tidak tersedia:', action);
+                            alert('Fungsi tidak tersedia: ' + action);
+                        }
+                    } catch (err) {
+                        console.error('Tombol gagal diklik:', err);
+                        alert('Gagal menjalankan aksi: ' + err.message);
+                    }
+                }, true);
+
+                // Handle file input change untuk unggah backup
+                const fileInput = document.getElementById('backupFileInput');
+                if (fileInput) {
+                    fileInput.addEventListener('change', () => {
+                        if (fileInput.files.length > 0 && window.RekonsilModule) {
+                            try {
+                                window.RekonsilModule.uploadBackupPeriod(fileInput);
+                            } catch (err) {
+                                console.error('Upload backup gagal:', err);
+                                alert('Gagal unggah backup: ' + err.message);
+                            }
+                        }
+                    });
+                }
+
+                // Handle file input change untuk unggah budget template
+                const budgetFileInput = document.getElementById('budgetFileInput');
+                if (budgetFileInput) {
+                    budgetFileInput.addEventListener('change', (e) => {
+                        console.log('Budget file input change: files=', budgetFileInput.files?.length);
+                        if (budgetFileInput.files.length > 0 && window.BudgetModule) {
+                            try {
+                                window.BudgetModule.uploadBudgetTemplate(budgetFileInput);
+                            } catch (err) {
+                                console.error('Upload budget gagal:', err);
+                                alert('Gagal unggah budget template: ' + err.message);
+                            }
+                        }
+                    });
+                }
+            }, 300);
+        });
+
+        // Fungsi toggle panel collapsible individual
+        window.togglePanel = function(panelId, headerEl) {
+            const panel = document.getElementById(panelId);
+            const toggle = headerEl.querySelector('.panel-toggle');
+            const isHidden = panel.style.display === 'none';
+            if (isHidden) {
+                panel.style.display = '';
+                toggle.textContent = '▼';
+                headerEl.querySelector('.panel-status').textContent = 'Klik header untuk sembunyikan';
+            } else {
+                panel.style.display = 'none';
+                toggle.textContent = '▶';
+                headerEl.querySelector('.panel-status').textContent = 'Klik header untuk menampilkan';
+            }
+            updateToggleAllButton();
+        };
+
+        // Fungsi toggle semua panel sekaligus
+        window.toggleAllPanels = function() {
+            const panels = ['panel-sinkronisasi', 'panel-backup', 'panel-budget'];
+            const firstPanel = document.getElementById(panels[0]);
+            const isHidden = firstPanel.style.display === 'none';
+            
+            panels.forEach(panelId => {
+                const panel = document.getElementById(panelId);
+                const header = panel.querySelector('.panel-header');
+                const toggle = header.querySelector('.panel-toggle');
+                const status = header.querySelector('.panel-status');
+                if (isHidden) {
+                    panel.style.display = '';
+                    toggle.textContent = '▼';
+                    status.textContent = 'Klik header untuk sembunyikan';
+                } else {
+                    panel.style.display = 'none';
+                    toggle.textContent = '▶';
+                    status.textContent = 'Klik header untuk menampilkan';
+                }
+            });
+            updateToggleAllButton();
+        };
+
+        // Update teks tombol toggle semua berdasarkan state panel
+        function updateToggleAllButton() {
+            const btn = document.getElementById('btnToggleAllPanels');
+            const panels = ['panel-sinkronisasi', 'panel-backup', 'panel-budget'];
+            const anyVisible = panels.some(panelId => {
+                const panel = document.getElementById(panelId);
+                return panel.style.display !== 'none';
+            });
+            if (anyVisible) {
+                btn.textContent = '👁️ Sembunyikan Panel Admin';
+                btn.classList.remove('btn-primary');
+                btn.classList.add('btn-secondary');
+            } else {
+                btn.textContent = '👁️ Tampilkan Panel Admin';
+                btn.classList.remove('btn-secondary');
+                btn.classList.add('btn-primary');
+            }
+        }
+    </script>
+    <script>
+        document.addEventListener('DOMContentLoaded', async () => {
+            await window.SmartBaraCore.init();
+            await window.SmartBaraLayout.init('dashboard');
+            window.SmartBaraUpload.init();
+            window.DashboardModule.init();
+        });
+    </script>
+</body>
+</html>

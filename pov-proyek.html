@@ -1,0 +1,91 @@
+﻿<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>POV Proyek UP - Smart BARA 7.10 HZ</title>
+    <link rel="stylesheet" href="css/app.css?v=20261102-smooth-loading">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body class="bg-[#090d16] text-slate-100 flex h-screen overflow-hidden">
+
+    <aside id="appSidebar" class="w-64 glass-panel border-r border-white/10 flex flex-col z-40 fixed inset-y-0 left-0 transition-transform duration-200 lg:static lg:translate-x-0 -translate-x-full">
+    </aside>
+
+    <div class="flex-1 flex flex-col min-w-0 overflow-hidden">
+        <header id="appHeader" class="glass-panel border-b border-white/10 px-6 py-3.5 flex items-center justify-between z-20">
+        </header>
+
+        <main class="flex-1 overflow-y-auto p-6 space-y-6">
+            <!-- Header Banner -->
+            <div class="glass-panel rounded-2xl p-6 border border-white/10 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-gradient-to-r from-slate-900 via-slate-900/90 to-teal-950/40 shadow-xl">
+                <div>
+                    <span class="badge badge-indigo mb-2">Hierarki Transaksi Per Proyek</span>
+                    <h2 class="text-2xl font-black text-white m-0 tracking-tight">POV Proyek Unit Pelaksana</h2>
+                    <p class="text-xs text-slate-400 mt-1 m-0">Tampilan hierarki laporan pengeluaran dikelompokkan berdasarkan nama Proyek UP dan rincian akun pembebanan.</p>
+                </div>
+                <div class="flex items-center gap-2">
+                    <span id="laporanStatusText" class="text-xs text-slate-400 font-semibold"></span>
+                </div>
+            </div>
+
+            <!-- Stats -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div class="glass-card rounded-xl p-4 border border-white/10">
+                    <p class="text-[11px] font-bold text-slate-400 uppercase tracking-wider m-0">Jumlah Proyek Tampil</p>
+                    <p class="text-2xl font-black text-white mt-1 mb-0 stat-value" id="laporanStatCount">0</p>
+                </div>
+                <div class="glass-card rounded-xl p-4 border border-white/10">
+                    <p class="text-[11px] font-bold text-slate-400 uppercase tracking-wider m-0">Total Akumulasi Realisasi Proyek</p>
+                    <p class="text-2xl font-black text-indigo-400 mt-1 mb-0 stat-value" id="laporanStatTotal">Rp 0</p>
+                </div>
+            </div>
+
+            <!-- Table Container -->
+            <div class="glass-panel rounded-xl border border-white/10 overflow-hidden shadow-2xl">
+                <div class="p-4 border-b border-white/10 flex items-center justify-between">
+                    <div class="flex flex-wrap items-center gap-2 w-full">
+                        <select id="laporanDeptFilter" onchange="LaporanModule.renderHierarchical()" class="form-select w-44" aria-label="Filter departemen">
+                            <option value="">Semua Dept Terpilih</option>
+                        </select>
+                        <input type="search" id="laporanSearch" oninput="LaporanModule.renderHierarchical()" placeholder="Cari proyek atau akun..." class="form-input flex-1 min-w-[180px]">
+                        <button type="button" onclick="LaporanModule.exportToExcel()" class="btn btn-secondary text-xs">Export Excel</button>
+                        <button type="button" onclick="LaporanModule.exportToPpt()" class="btn btn-secondary text-xs">Export PPT</button>
+                    </div>
+                </div>
+                <div class="overflow-x-auto max-h-[60vh]">
+                    <table class="app-table">
+                        <thead>
+                            <tr>
+                                <th>Proyek UP</th><th>Departemen</th>
+                                <th class="text-right">Budget Tahunan</th><th class="text-right">Realisasi (Debit - Kredit)</th>
+                                <th class="text-right">Selisih Budget - Realisasi</th><th class="text-right">%</th>
+                                <th class="text-right">Nilai Rekonsil</th><th class="text-right">Selisih Budget - Rekonsil</th><th class="text-right">%</th>
+                            </tr>
+                        </thead>
+                        <tbody id="laporanTableBody" class="divide-y divide-white/5">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Scripts -->
+    <script src="js/config.js?v=20261105-goa"></script>
+    <script src="js/utils/formatters.js?v=upload-safety-1"></script>
+    <script src="js/core.js?v=20261105-goa"></script>
+    <script src="js/modules/upload.js?v=20261104-budget-ytd-range-fix"></script>
+    <script src="js/layout.js?v=20261102-upload-preview-wide"></script>
+    <script src="js/modules/laporan.js?v=transaction-normalization-3"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', async () => {
+            await window.SmartBaraCore.init();
+            await window.SmartBaraLayout.init('pov-proyek');
+            await window.LaporanModule.init('proyek');
+        });
+    </script>
+</body>
+</html>
+

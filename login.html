@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#101a1e">
+    <title>Masuk - Smart BARA</title>
+    <link rel="stylesheet" href="css/app.css?v=20261102-smooth-loading">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body class="min-h-screen overflow-auto bg-[#101a1e] text-slate-100">
+    <main class="min-h-screen grid lg:grid-cols-[1.05fr_.95fr]">
+        <section class="relative flex min-h-[38vh] flex-col justify-between overflow-hidden bg-[#123b36] p-8 sm:p-12 lg:min-h-screen">
+            <img src="https://images.unsplash.com/photo-1504307651254-35680f356dfd?auto=format&fit=crop&w=1600&q=85" alt="" class="absolute inset-0 h-full w-full object-cover opacity-45" fetchpriority="high">
+            <div class="absolute inset-0 bg-gradient-to-b from-[#0d2926]/75 via-[#123b36]/65 to-[#123b36]/90"></div>
+            <div class="absolute inset-0 opacity-25" style="background-image:linear-gradient(135deg,transparent 35%,rgba(255,255,255,.09) 35.2%,transparent 35.5%),linear-gradient(45deg,transparent 62%,rgba(255,255,255,.08) 62.2%,transparent 62.5%);background-size:54px 54px"></div>
+            <div class="relative flex items-center gap-3">
+                <div class="flex h-11 w-11 items-center justify-center rounded-xl bg-[#f0c36d] font-black text-[#123b36]">HZ</div>
+                <div><p class="m-0 text-sm font-black tracking-wide">SMART BARA</p><p class="m-0 text-[10px] font-bold uppercase text-emerald-100/70">Financial planning suite</p></div>
+            </div>
+            <div class="relative max-w-xl py-12">
+                <p class="mb-3 text-xs font-extrabold uppercase text-[#f0c36d]">Workspace keuangan terpadu</p>
+                <h1 class="m-0 text-4xl font-black leading-tight sm:text-5xl">Rencana yang jelas. Kendali yang nyata.</h1>
+                <p class="mt-5 max-w-md text-sm leading-6 text-emerald-50/75">Masuk untuk mengelola rekonsiliasi, anggaran, dan proyeksi operasional dalam satu ruang kerja.</p>
+            </div>
+            <div class="relative">
+                <p class="m-0 text-xs text-emerald-100/60">Smart BARA · 7.10 HZ</p>
+                <p class="mb-0 mt-1 text-[10px] font-semibold text-emerald-100/60">Creator Developer WEB By Harizal 7.10 HZ</p>
+            </div>
+        </section>
+
+        <section class="flex items-center justify-center bg-[#f4f3ed] px-5 py-10 text-slate-900 sm:px-10">
+            <div class="w-full max-w-md">
+                <a href="index.html" class="mb-8 inline-flex text-xs font-bold text-slate-500 hover:text-teal-800">← Kembali ke aplikasi</a>
+                <p class="mb-2 text-xs font-black uppercase text-teal-800">Akses akun</p>
+                <h2 id="authHeading" class="m-0 text-3xl font-black">Selamat datang</h2>
+                <p id="authSubheading" class="mt-2 text-sm text-slate-600">Masuk ke workspace Smart BARA.</p>
+                <div id="authNotice" role="status" class="mt-5 hidden rounded-md border px-3 py-2 text-sm"></div>
+
+                <form id="authForm" class="mt-7 space-y-4">
+                    <div id="emailField">
+                        <label for="authEmail" class="mb-1.5 block text-xs font-bold text-slate-700">Email</label>
+                        <input id="authEmail" type="email" autocomplete="email" required class="w-full rounded-md border border-slate-300 bg-white px-3 py-3 text-sm outline-none transition focus:border-teal-700 focus:ring-2 focus:ring-teal-700/15" placeholder="nama@perusahaan.co.id">
+                    </div>
+                    <div id="passwordField">
+                        <label for="authPassword" class="mb-1.5 block text-xs font-bold text-slate-700">Password</label>
+                        <div class="flex rounded-md border border-slate-300 bg-white focus-within:border-teal-700 focus-within:ring-2 focus-within:ring-teal-700/15">
+                            <input id="authPassword" type="password" autocomplete="current-password" required class="min-w-0 flex-1 rounded-md bg-transparent px-3 py-3 text-sm outline-none" placeholder="Password akun">
+                            <button id="togglePassword" type="button" class="px-3 text-xs font-bold text-teal-800" aria-label="Tampilkan password">Tampilkan</button>
+                        </div>
+                    </div>
+                    <div id="confirmPasswordField" class="hidden">
+                        <label for="authPasswordConfirm" class="mb-1.5 block text-xs font-bold text-slate-700">Ulangi password baru</label>
+                        <div class="flex rounded-md border border-slate-300 bg-white focus-within:border-teal-700 focus-within:ring-2 focus-within:ring-teal-700/15">
+                            <input id="authPasswordConfirm" type="password" autocomplete="new-password" minlength="6" class="min-w-0 flex-1 rounded-md bg-transparent px-3 py-3 text-sm outline-none" placeholder="Masukkan ulang password">
+                            <button id="toggleConfirmPassword" type="button" class="px-3 text-xs font-bold text-teal-800" aria-label="Tampilkan password">Tampilkan</button>
+                        </div>
+                    </div>
+                    <button id="authSubmit" type="submit" class="inline-flex w-full items-center justify-center gap-2 rounded-md bg-[#14594f] px-4 py-3 text-sm font-extrabold text-white transition hover:bg-[#10473f] disabled:cursor-wait disabled:opacity-70" aria-live="polite">
+                        <span id="authSubmitLabel">Masuk</span>
+                        <span id="authSubmitSpinner" class="hidden h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden="true"></span>
+                    </button>
+                </form>
+
+                <div id="authLinks" class="mt-5 flex flex-wrap items-center justify-between gap-3 text-xs font-bold">
+                    <button id="signupLink" type="button" class="hidden text-teal-800 hover:underline">Buat akun</button>
+                    <button id="forgotLink" type="button" class="text-slate-600 hover:text-teal-800 hover:underline">Lupa password?</button>
+                </div>
+                <button id="backToLogin" type="button" class="mt-5 hidden text-xs font-bold text-teal-800 hover:underline">Kembali ke login</button>
+            </div>
+        </section>
+    </main>
+
+    <script src="js/config.js?v=20261105-goa"></script>
+    <script src="js/core.js?v=20261105-goa"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', async () => {
+            const heading = document.getElementById('authHeading');
+            const subheading = document.getElementById('authSubheading');
+            const form = document.getElementById('authForm');
+            const emailInput = document.getElementById('authEmail');
+            const passwordInput = document.getElementById('authPassword');
+            const confirmInput = document.getElementById('authPasswordConfirm');
+            const submit = document.getElementById('authSubmit');
+            const submitLabel = document.getElementById('authSubmitLabel');
+            const submitSpinner = document.getElementById('authSubmitSpinner');
+            const notice = document.getElementById('authNotice');
+            const links = document.getElementById('authLinks');
+            const back = document.getElementById('backToLogin');
+            const passwordField = document.getElementById('passwordField');
+            const confirmField = document.getElementById('confirmPasswordField');
+            const emailField = document.getElementById('emailField');
+            let mode = new URLSearchParams(location.search).get('mode') === 'recovery' ? 'recovery' : 'login';
+
+            SmartBaraCore.initAuthOnly();
+
+            const showNotice = (message, isError = false) => {
+                notice.textContent = message;
+                notice.className = `mt-5 rounded-md border px-3 py-2 text-sm ${isError ? 'border-rose-300 bg-rose-50 text-rose-800' : 'border-teal-300 bg-teal-50 text-teal-900'}`;
+            };
+            const setMode = nextMode => {
+                mode = nextMode;
+                const recovery = mode === 'recovery';
+                const forgot = mode === 'forgot';
+                const signup = mode === 'signup';
+                heading.textContent = recovery ? 'Buat password baru' : forgot ? 'Reset password' : signup ? 'Buat akun' : 'Selamat datang';
+                subheading.textContent = recovery ? 'Pilih password baru untuk akun Anda.' : forgot ? 'Kami akan mengirim tautan pemulihan ke email Anda.' : signup ? 'Daftarkan email untuk mengakses workspace.' : 'Masuk ke workspace Smart BARA.';
+                passwordField.classList.toggle('hidden', forgot);
+                confirmField.classList.toggle('hidden', !(recovery || signup));
+                links.classList.toggle('hidden', recovery || forgot);
+                back.classList.toggle('hidden', !(recovery || forgot));
+                emailField.classList.toggle('hidden', recovery);
+                emailInput.required = !recovery;
+                passwordInput.required = !forgot;
+                passwordInput.minLength = mode === 'login' ? 0 : 6;
+                passwordInput.placeholder = mode === 'login' ? 'Password akun' : 'Minimal 6 karakter';
+                confirmInput.required = recovery || signup;
+                confirmInput.minLength = 6;
+                passwordInput.autocomplete = recovery || signup ? 'new-password' : 'current-password';
+                submitLabel.textContent = recovery ? 'Simpan password baru' : forgot ? 'Kirim link reset' : signup ? 'Daftar' : 'Masuk';
+                notice.classList.add('hidden');
+            };
+            const toggleVisibility = (input, button) => {
+                const visible = input.type === 'password';
+                input.type = visible ? 'text' : 'password';
+                button.textContent = visible ? 'Sembunyikan' : 'Tampilkan';
+                button.setAttribute('aria-label', visible ? 'Sembunyikan password' : 'Tampilkan password');
+            };
+            document.getElementById('togglePassword').addEventListener('click', event => toggleVisibility(passwordInput, event.currentTarget));
+            document.getElementById('toggleConfirmPassword').addEventListener('click', event => toggleVisibility(confirmInput, event.currentTarget));
+            document.getElementById('signupLink').addEventListener('click', () => setMode('signup'));
+            document.getElementById('forgotLink').addEventListener('click', () => setMode('forgot'));
+            back.addEventListener('click', () => setMode('login'));
+            window.SmartBaraCore.supabase?.auth.onAuthStateChange(event => {
+                if (event === 'PASSWORD_RECOVERY') setMode('recovery');
+            });
+
+            form.addEventListener('submit', async event => {
+                event.preventDefault();
+                submit.disabled = true;
+                submitSpinner.classList.remove('hidden');
+                submitLabel.textContent = mode === 'login' ? 'Memeriksa akun...' : mode === 'signup' ? 'Membuat akun...' : mode === 'forgot' ? 'Mengirim tautan...' : 'Menyimpan password...';
+                try {
+                    const email = emailInput.value.trim();
+                    const password = passwordInput.value;
+                    if (mode === 'forgot') {
+                        const { error } = await SmartBaraCore.requestPasswordReset(email);
+                        if (error) throw error;
+                        showNotice('Tautan reset password dikirim jika email terdaftar. Silakan cek kotak masuk Anda.');
+                    } else if (mode === 'signup') {
+                        if (password !== confirmInput.value) throw new Error('Konfirmasi password tidak sama.');
+                        const { data, error } = await SmartBaraCore.signUp(email, password);
+                        if (error) throw error;
+                        if (data.session) location.href = 'index.html';
+                        else showNotice('Pendaftaran berhasil. Cek email untuk konfirmasi akun.');
+                    } else if (mode === 'recovery') {
+                        if (password !== confirmInput.value) throw new Error('Konfirmasi password tidak sama.');
+                        const { error } = await SmartBaraCore.updatePassword(password);
+                        if (error) throw error;
+                        showNotice('Password berhasil diperbarui. Anda akan dialihkan ke aplikasi.');
+                        setTimeout(() => location.href = 'index.html', 1200);
+                    } else {
+                        await SmartBaraCore.login(email, password);
+                        location.href = 'index.html';
+                    }
+                } catch (error) {
+                    showNotice(error.message || 'Proses autentikasi gagal. Silakan coba kembali.', true);
+                } finally {
+                    submit.disabled = false;
+                    submitSpinner.classList.add('hidden');
+                    submitLabel.textContent = mode === 'recovery' ? 'Simpan password baru' : mode === 'forgot' ? 'Kirim link reset' : mode === 'signup' ? 'Daftar' : 'Masuk';
+                }
+            });
+
+            if (mode === 'recovery') setMode('recovery');
+        });
+    </script>
+</body>
+</html>

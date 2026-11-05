@@ -1,0 +1,178 @@
+﻿<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pengguna & Akses - Smart BARA 7.10 HZ</title>
+    <link rel="stylesheet" href="css/app.css?v=20261102-smooth-loading">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body class="bg-[#090d16] text-slate-100 flex h-screen overflow-hidden">
+
+    <!-- Sidebar Navigation -->
+    <aside id="appSidebar" class="w-64 glass-panel border-r border-white/10 flex flex-col z-40 fixed inset-y-0 left-0 transition-transform duration-200 lg:static lg:translate-x-0 -translate-x-full">
+    </aside>
+
+    <!-- Main Content Area -->
+    <div class="flex-1 flex flex-col min-w-0 overflow-hidden">
+        <header id="appHeader" class="glass-panel border-b border-white/10 px-6 py-3.5 flex items-center justify-between z-20">
+        </header>
+
+        <main class="flex-1 overflow-y-auto p-6 space-y-6">
+            <!-- Top Banner -->
+            <div class="glass-panel rounded-2xl p-6 border border-white/10 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-5 bg-gradient-to-r from-slate-900 via-slate-900/90 to-teal-950/40 shadow-xl">
+                <div>
+                    <span class="badge badge-teal mb-2">Administrasi Akses & Keamanan</span>
+                    <h2 class="text-2xl font-black text-white m-0 tracking-tight">👥 Pengguna & Hak Akses</h2>
+                    <p class="text-xs text-slate-400 mt-1 m-0">Kelola akun dan empat tingkat akses: Superadmin, SPV, Tim, dan Viewer.</p>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button type="button" onclick="UsersModule.loadData()" class="btn bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs">⟳ Muat Ulang</button>
+                    <button type="button" onclick="UsersModule.openModal()" class="btn btn-primary text-xs">+ Undang Pengguna</button>
+                </div>
+            </div>
+
+            <!-- Table Container -->
+            <div class="glass-panel rounded-xl border border-white/10 overflow-hidden shadow-2xl">
+                <div class="p-4 border-b border-white/10 flex flex-wrap items-center justify-between gap-3 bg-slate-950/40">
+                    <div class="flex items-center gap-3 flex-1 min-w-[280px]">
+                        <input id="adminUserSearch" type="search" oninput="UsersModule.renderTable()" placeholder="Cari nama, email, departemen, jabatan..." class="form-input flex-1">
+                        <select id="adminUserRoleFilter" onchange="UsersModule.renderTable()" class="form-select w-40">
+                            <option value="">Semua Level</option>
+                            <option value="superadmin">Superadmin</option>
+                            <option value="spv">SPV</option>
+                            <option value="tim">Tim</option>
+                            <option value="viewer">Viewer</option>
+                        </select>
+                    </div>
+                    <span id="adminUserStatus" class="text-xs text-slate-400 font-semibold ml-auto"></span>
+                </div>
+                <div class="overflow-x-auto max-h-[65vh]">
+                    <table class="app-table">
+                        <thead class="sticky top-0 bg-slate-900/95 backdrop-blur z-10">
+                            <tr>
+                                <th>Pengguna</th>
+                                <th>Departemen / Jabatan</th>
+                                <th>Level Akses</th>
+                                <th>Status Aktivitas</th>
+                                <th class="text-right">Aksi</th>
+                            </tr>
+                        </thead>
+                        <tbody id="adminUsersTableBody" class="divide-y divide-white/5">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Modal Form Tambah / Edit Pengguna -->
+    <div id="adminUserModal" class="modal-overlay fixed inset-0 z-50 flex items-center justify-center p-4 hidden opacity-0 transition-all duration-200">
+        <div class="glass-panel w-full max-w-lg rounded-2xl p-6 border border-white/20 shadow-2xl relative" onclick="event.stopPropagation()">
+            <div class="flex justify-between items-center mb-5 pb-3 border-b border-white/10">
+                <div>
+                    <span class="badge badge-teal mb-1">Pengelolaan Akun</span>
+                    <h3 id="adminUserModalTitle" class="text-lg font-black text-white m-0">Undang Pengguna Baru</h3>
+                </div>
+                <button type="button" onclick="UsersModule.closeModal()" class="text-slate-400 hover:text-white text-xl">✕</button>
+            </div>
+            <form onsubmit="UsersModule.saveUser(event)" class="space-y-4">
+                <input type="hidden" id="adminUserId">
+                <div>
+                    <label class="form-label">Email Perusahaan</label>
+                    <input type="email" id="adminUserEmail" required class="form-input" placeholder="nama@smartbara.id">
+                </div>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                        <label class="form-label">Nama Lengkap</label>
+                        <input type="text" id="adminUserFullName" required class="form-input" placeholder="Nama pengguna">
+                    </div>
+                    <div>
+                        <label class="form-label">Level Akses</label>
+                        <select id="adminUserRole" required class="form-select">
+                            <option value="superadmin">Superadmin (semua akses)</option>
+                            <option value="spv">SPV (baca, tambah, ubah, hapus)</option>
+                            <option value="tim">Tim (baca, tambah, ubah)</option>
+                            <option value="viewer">Viewer (baca saja)</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                        <label class="form-label">Departemen</label>
+                        <input type="text" id="adminUserDepartment" list="adminUserDepartmentOptions" class="form-input" placeholder="Pilih atau ketik departemen">
+                        <datalist id="adminUserDepartmentOptions"></datalist>
+                    </div>
+                    <div>
+                        <label class="form-label">Jabatan</label>
+                        <input type="text" id="adminUserPosition" class="form-input" placeholder="Contoh: Manager Operasional">
+                    </div>
+                </div>
+                <div class="p-3 rounded-lg bg-teal-500/10 border border-teal-500/20 text-[11px] text-teal-300">
+                    Link undangan login dikirimkan ke email pengguna. Pengguna dapat membuat password saat menerima undangan.
+                </div>
+                <div class="flex justify-end gap-3 pt-3 border-t border-white/10">
+                    <button type="button" onclick="UsersModule.closeModal()" class="btn btn-secondary">Batal</button>
+                    <button type="submit" id="adminUserSaveButton" class="btn btn-primary">Simpan</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal Reset Password -->
+    <div id="adminPasswordResetModal" class="modal-overlay fixed inset-0 z-[60] flex items-center justify-center p-4 hidden opacity-0 transition-all duration-200">
+        <div class="glass-panel w-full max-w-md rounded-2xl p-6 border border-white/20 shadow-2xl relative" onclick="event.stopPropagation()">
+            <div class="flex justify-between items-center mb-5 pb-3 border-b border-white/10">
+                <div>
+                    <span class="badge badge-indigo mb-1">Reset Password</span>
+                    <h3 class="text-lg font-black text-white m-0">Password Baru</h3>
+                </div>
+                <button type="button" onclick="UsersModule.closePasswordResetModal()" class="text-slate-400 hover:text-white text-xl">✕</button>
+            </div>
+
+            <div class="space-y-4">
+                <div>
+                    <p id="resetPasswordStatus" class="text-sm text-slate-300 mb-2">Reset password user</p>
+                    <label class="form-label">Email</label>
+                    <input type="text" id="resetPasswordEmail" readonly class="form-input bg-slate-900/70 text-slate-200">
+                </div>
+
+                <div>
+                    <label class="form-label">Password Baru</label>
+                    <div class="flex items-center gap-2">
+                        <input type="text" id="resetPasswordValue" readonly class="form-input flex-1 bg-slate-900/70 text-emerald-300 font-mono text-sm tracking-wide">
+                        <button type="button" onclick="UsersModule.copyResetPassword()" class="btn btn-secondary text-xs px-3 py-2">Copy</button>
+                    </div>
+                </div>
+
+                <div class="p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-200">
+                    ℹ️ Password ini bersifat sementara. Beri tahu pengguna agar segera mengganti password setelah login.
+                </div>
+
+                <div class="flex justify-end gap-3 pt-2 border-t border-white/10">
+                    <button type="button" onclick="UsersModule.closePasswordResetModal()" class="btn btn-secondary">Tutup</button>
+                    <button type="button" onclick="UsersModule.sendPasswordReset(document.getElementById('resetPasswordUserId').value)" class="btn btn-primary">Buat Lagi</button>
+                </div>
+            </div>
+            <input type="hidden" id="resetPasswordUserId">
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="js/config.js?v=20261105-goa"></script>
+    <script src="js/utils/formatters.js?v=upload-safety-1"></script>
+    <script src="js/core.js?v=20261105-goa"></script>
+    <script src="js/modules/upload.js?v=20261104-budget-ytd-range-fix"></script>
+    <script src="js/layout.js?v=20261102-upload-preview-wide"></script>
+    <script src="js/modules/users.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', async () => {
+            await SmartBaraCore.init();
+            await SmartBaraLayout.init('users');
+            await UsersModule.init();
+        });
+    </script>
+</body>
+</html>
+

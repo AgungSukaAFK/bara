@@ -1,0 +1,31 @@
+{
+  "version": 2,
+  "cleanUrls": true,
+  "trailingSlash": false,
+  "functions": {
+    "api/db.js": {
+      "includeFiles": "smart-asset-project/*.json"
+    },
+    "api/smart-asset.js": {
+      "includeFiles": "smart-asset-project/**/*"
+    }
+  },
+  "routes": [
+    {
+      "src": "/smart-asset-project/?",
+      "dest": "/api/smart-asset?path=index.html"
+    },
+    {
+      "src": "/smart-asset-project/(.*)",
+      "dest": "/api/smart-asset?path=$1"
+    },
+    {
+      "src": "/smart-asset/?",
+      "dest": "/api/smart-asset?path=index.html"
+    },
+    {
+      "src": "/smart-asset/(.*)",
+      "dest": "/api/smart-asset?path=$1"
+    }
+  ]
+}

@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pengaturan AI Budget - Smart BARA 7.10 HZ</title>
+    <link rel="stylesheet" href="css/app.css?v=20261102-smooth-loading">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body class="bg-[#090d16] text-slate-100 flex h-screen overflow-hidden">
+    <aside id="appSidebar" class="w-64 glass-panel border-r border-white/10 flex flex-col z-40 fixed inset-y-0 left-0 transition-transform duration-200 lg:static lg:translate-x-0 -translate-x-full"></aside>
+    <div class="flex-1 flex flex-col min-w-0 overflow-hidden">
+        <header id="appHeader" class="glass-panel border-b border-white/10 px-6 py-3.5 flex items-center justify-between z-20"></header>
+        <main class="flex-1 overflow-y-auto p-4 sm:p-6">
+            <div class="settings-shell mx-auto w-full max-w-7xl space-y-6">
+                <div class="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+                    <div>
+                        <span class="badge badge-teal mb-2">Budget Creator</span>
+                        <h1 class="m-0 text-2xl font-black tracking-tight text-white">Pengaturan AI Budget</h1>
+                    </div>
+                    <div class="rounded-full border border-teal-500/30 bg-teal-500/10 px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.22em] text-teal-200">
+                        Sistem konfigurasi AI
+                    </div>
+                </div>
+
+                <div class="grid gap-6 xl:grid-cols-[1.35fr_0.65fr]">
+                    <section class="glass-panel rounded-2xl border border-white/10 p-5 sm:p-6">
+                        <div class="mb-5 flex items-center justify-between gap-3">
+                            <div>
+                                <p class="m-0 text-[10px] font-bold uppercase tracking-[0.22em] text-slate-400">Tambah key baru</p>
+                                <h2 class="mt-2 m-0 text-lg font-black text-white">Konfigurasi provider AI</h2>
+                            </div>
+                            <span class="badge badge-indigo text-[10px]">Secure</span>
+                        </div>
+                        <form id="aiSettingsForm" class="space-y-4" autocomplete="off">
+                            <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                                <label class="block">
+                                    <span class="block text-xs font-bold text-slate-300 mb-1.5">Nama key</span>
+                                    <input id="aiKeyLabel" type="text" class="form-input w-full" required maxlength="80" placeholder="Contoh: Gemini utama">
+                                </label>
+                                <label class="block">
+                                    <span class="block text-xs font-bold text-slate-300 mb-1.5">Provider AI</span>
+                                    <select id="aiProvider" class="form-select w-full" required>
+                                        <optgroup label="Kuota gratis / evaluasi">
+                                            <option value="gemini">Google Gemini · kuota gratis terbatas</option>
+                                            <option value="openrouter">OpenRouter · model gratis bertanda :free</option>
+                                            <option value="groq">Groq · free tier terbatas</option>
+                                            <option value="cloudflare">Cloudflare Workers AI · 10.000 neurons/hari gratis</option>
+                                            <option value="cohere">Cohere · evaluasi hingga 1.000 panggilan/bulan</option>
+                                        </optgroup>
+                                        <optgroup label="Trial / kredit awal">
+                                            <option value="cerebras">Cerebras · kredit trial $5/30 hari (syarat vendor)</option>
+                                        </optgroup>
+                                        <optgroup label="Provider lainnya">
+                                            <option value="claude">Anthropic Claude</option>
+                                            <option value="sambanova">SambaNova Cloud</option>
+                                            <option value="mistral">Mistral AI</option>
+                                            <option value="together">Together AI</option>
+                                            <option value="fireworks">Fireworks AI</option>
+                                            <option value="nvidia">NVIDIA NIM</option>
+                                            <option value="huggingface">Hugging Face Inference</option>
+                                            <option value="siliconflow">SiliconFlow</option>
+                                            <option value="novita">Novita AI</option>
+                                            <option value="hyperbolic">Hyperbolic</option>
+                                            <option value="zai">Z.AI / GLM</option>
+                                            <option value="dashscope">Alibaba Cloud DashScope</option>
+                                            <option value="moonshot">Moonshot AI / Kimi</option>
+                                            <option value="minimax">MiniMax</option>
+                                        </optgroup>
+                                    </select>
+                                </label>
+                                <label id="aiCloudflareAccountField" class="hidden sm:col-span-2">
+                                    <span class="block text-xs font-bold text-slate-300 mb-1.5">Cloudflare Account ID</span>
+                                    <input id="aiCloudflareAccountId" type="text" class="form-input w-full" maxlength="64" spellcheck="false" placeholder="Account ID dari Cloudflare dashboard">
+                                </label>
+                                <label class="block sm:col-span-2">
+                                    <span class="block text-xs font-bold text-slate-300 mb-1.5">Model</span>
+                                    <div class="flex gap-2">
+                                        <input id="aiModel" type="text" list="aiModelOptions" class="form-input min-w-0 flex-1" required maxlength="120" spellcheck="false" placeholder="Pilih model dari daftar atau ketik ID model">
+                                        <datalist id="aiModelOptions"></datalist>
+                                        <button id="aiLoadModels" type="button" class="btn btn-secondary whitespace-nowrap text-xs" title="Muat model terbaru dari provider">Muat Model</button>
+                                    </div>
+                                    <span id="aiModelStatus" class="mt-1 block min-h-4 text-[10px] font-normal text-slate-500" aria-live="polite"></span>
+                                </label>
+                                <label class="block sm:col-span-2">
+                                    <span class="block text-xs font-bold text-slate-300 mb-1.5">API key</span>
+                                    <div class="flex gap-2">
+                                        <input id="aiApiKey" type="password" class="form-input min-w-0 flex-1" required autocomplete="new-password" spellcheck="false" placeholder="Masukkan API key provider">
+                                        <button id="aiToggleKey" type="button" class="btn btn-secondary" aria-label="Tampilkan API key" title="Tampilkan API key">Tampilkan</button>
+                                    </div>
+                                </label>
+                            </div>
+                            <p class="text-xs text-slate-400 m-0 leading-5">Kuota gratis mengikuti batas dan syarat masing-masing vendor, dan dapat berubah. Key disimpan di database dengan akses khusus Edge Function; urutan menentukan key yang dicoba lebih dulu saat provider gagal atau terkena limit.</p>
+                            <div class="flex flex-wrap items-center gap-2 pt-2">
+                                <button id="aiSaveKey" type="submit" class="btn btn-primary">Tambah Key</button>
+                                <span id="aiSettingsStatus" class="text-xs text-slate-400" role="status" aria-live="polite"></span>
+                            </div>
+                        </form>
+                    </section>
+
+                    <aside class="glass-panel rounded-2xl border border-white/10 p-5 sm:p-6">
+                        <div class="mb-4 flex items-center justify-between gap-2">
+                            <p class="m-0 text-[10px] font-bold uppercase tracking-[0.22em] text-slate-400">Ringkasan</p>
+                            <span class="badge badge-teal text-[10px]">Live</span>
+                        </div>
+                        <div class="space-y-3">
+                            <div class="settings-stat-panel">
+                                <div class="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">Provider aktif</div>
+                                <div id="settingsProviderSummary" class="mt-2 text-lg font-black text-white">Claude</div>
+                            </div>
+                            <div class="settings-stat-panel">
+                                <div class="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">Key tersimpan</div>
+                                <div id="settingsKeyCountSummary" class="mt-2 text-lg font-black text-white">0</div>
+                            </div>
+                            <div class="settings-stat-panel">
+                                <div class="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">Periode</div>
+                                <div id="settingsPeriodSummary" class="mt-2 text-lg font-black text-white">-</div>
+                            </div>
+                        </div>
+                        <div class="mt-5 rounded-xl border border-dashed border-white/10 bg-white/[0.02] p-3 text-[11px] leading-5 text-slate-300">
+                            Gunakan provider AI yang paling stabil untuk kebutuhan budget creator. Prioritas key akan diurut otomatis berdasarkan urutan penyimpanan dan status aktif.
+                        </div>
+                    </aside>
+                </div>
+
+                <section class="glass-panel rounded-2xl border border-white/10 p-5 sm:p-6">
+                    <div class="mb-4 flex items-center justify-between gap-3">
+                        <h2 class="m-0 text-base font-bold text-white">API key tersimpan</h2>
+                        <button id="aiReloadKeys" type="button" class="btn btn-secondary text-xs" title="Muat ulang daftar key">Muat Ulang</button>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="app-table min-w-[720px]">
+                            <thead>
+                                <tr>
+                                    <th>Prioritas</th>
+                                    <th>Provider / Nama</th>
+                                    <th>Model / Key</th>
+                                    <th>Status</th>
+                                    <th class="text-right">Aksi</th>
+                                </tr>
+                            </thead>
+                            <tbody id="aiKeyList">
+                                <tr><td colspan="5" class="p-6 text-center text-slate-500">Memuat daftar key...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+
+                <section class="glass-panel rounded-2xl border border-white/10 p-5 sm:p-6">
+                    <div class="mb-4 flex items-center justify-between gap-3">
+                        <div>
+                            <h2 class="m-0 text-base font-bold text-white">Riwayat Approval</h2>
+                            <p class="m-0 mt-1 text-[11px] text-slate-500">Log persetujuan periode aktif dan scope approval semua departemen.</p>
+                        </div>
+                        <span class="badge badge-emerald text-[10px]">Superadmin</span>
+                    </div>
+                    <div id="approvalAuditSettingsPanel" class="space-y-3"></div>
+                </section>
+            </div>
+        </main>
+    </div>
+    <script src="js/config.js?v=20261105-goa"></script>
+    <script src="js/utils/formatters.js"></script>
+    <script src="js/core.js?v=20261105-goa"></script>
+    <script src="js/layout.js?v=20261102-upload-preview-wide"></script>
+    <script src="js/modules/ai-settings.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', async () => {
+            await window.SmartBaraCore.init({ skipPeriodStore: true });
+            await window.SmartBaraLayout.init('ai-settings', { skipPeriodStore: true });
+            await window.AISettingsModule.init();
+        });
+    </script>
+</body>
+</html>

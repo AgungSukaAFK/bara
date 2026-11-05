@@ -1,0 +1,287 @@
+﻿<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Anggaran Masa Depan - Smart BARA 7.10 HZ</title>
+    <link rel="stylesheet" href="css/app.css?v=20261102-smooth-loading">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body class="bg-[#090d16] text-slate-100 flex h-screen overflow-hidden">
+
+    <!-- Sidebar Navigation -->
+    <aside id="appSidebar" class="w-64 glass-panel border-r border-white/10 flex flex-col z-40 fixed inset-y-0 left-0 transition-transform duration-200 lg:static lg:translate-x-0 -translate-x-full">
+    </aside>
+
+    <!-- Main Content Area -->
+    <div class="flex-1 flex flex-col min-w-0 overflow-hidden">
+        <header id="appHeader" class="glass-panel border-b border-white/10 px-6 py-3.5 flex items-center justify-between z-20">
+        </header>
+
+        <main class="flex-1 overflow-y-auto p-6 space-y-6">
+            <!-- Top Banner & Controls -->
+            <div class="glass-panel rounded-2xl p-6 border border-white/10 flex flex-col xl:flex-row xl:items-center xl:justify-between gap-5 bg-gradient-to-r from-slate-900 via-slate-900/90 to-teal-950/40 shadow-xl">
+                <div>
+                    <span class="badge badge-teal mb-2">Perencanaan Bergulir 12 Bulan</span>
+                    <h2 class="text-2xl font-black text-white m-0 tracking-tight">Anggaran Masa Depan <span id="futureBudgetYearTitle" class="text-teal-400"></span></h2>
+                    <p class="text-xs text-slate-400 mt-1 m-0 max-w-2xl">Refresh Aktual mengikuti pola actual tiap bulan; bulan tanpa rekonsil memakai rata-rata. Asumsi tahun depan terpisah dari rate baris, kecuali Anda memilih Terapkan ke Semua.</p>
+                </div>
+                <div class="flex flex-wrap items-center gap-2">
+                    <div class="flex flex-wrap items-center gap-2 rounded-lg border border-amber-400/20 bg-amber-500/5 px-3 py-1.5">
+                        <label class="flex items-center gap-2 text-[11px] font-bold text-amber-100">
+                            <input id="futureBudgetRangeEnabled" type="checkbox" checked class="accent-amber-400">
+                            <span>Batasi range global</span>
+                        </label>
+                        <label class="flex items-center gap-1 text-[10px] text-slate-300">
+                            <span>Naik maks.</span>
+                            <input id="futureBudgetMaxIncrease" type="number" min="0" max="1000" step="1" value="20" class="w-14 rounded bg-slate-950 px-1.5 py-1 text-right text-xs font-bold text-amber-200">
+                            <span>%</span>
+                        </label>
+                        <label class="flex items-center gap-1 text-[10px] text-slate-300">
+                            <span>Turun maks.</span>
+                            <input id="futureBudgetMaxDecrease" type="number" min="0" max="100" step="1" value="20" class="w-14 rounded bg-slate-950 px-1.5 py-1 text-right text-xs font-bold text-amber-200">
+                            <span>%</span>
+                        </label>
+                        <span id="futureBudgetRangeStatus" class="w-full text-[9px] text-slate-400">Memuat pengaturan global...</span>
+                    </div>
+                    <div class="flex items-center gap-2 bg-slate-950/60 border border-white/10 rounded-lg px-3 py-1.5">
+                        <span class="text-[10px] font-bold text-slate-400 uppercase" title="Asumsi prediksi tahun depan dan nilai awal baris baru; tidak mengubah rate baris yang sudah ada.">Asumsi Thn Depan %</span>
+                        <input id="futureBudgetDefaultRate" type="number" min="-20" max="50" step="0.5" value="5" onchange="BudgetFutureModule.updateAssumption()" class="w-16 bg-transparent text-sm font-black text-teal-300 focus:outline-none">
+                    </div>
+                    <button type="button" onclick="BudgetFutureModule.applyDefaultRateToAll(0)" class="btn bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs">0%</button>
+                    <button type="button" onclick="BudgetFutureModule.applyDefaultRateToAll()" class="btn bg-indigo-600/80 hover:bg-indigo-600 text-white text-xs">Terapkan ke Semua</button>
+                    <button type="button" onclick="BudgetFutureModule.refreshFromActual()" class="btn bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs" title="Hitung ulang baris berdasarkan aktual per akun dan proyek">⟳ Refresh Aktual</button>
+                    <button type="button" onclick="BudgetFutureModule.openMoveModal()" class="btn bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 text-xs">⇄ Pindah Akun</button>
+                    <button type="button" onclick="BudgetFutureModule.openModal()" class="btn btn-primary text-xs">+ Tambah Baris</button>
+                    <button type="button" onclick="BudgetFutureModule.exportToExcel()" class="btn btn-secondary text-xs">📤 Export Excel</button>
+                </div>
+            </div>
+
+            <!-- KPI Cards Grid -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+                <div class="glass-card rounded-xl p-3.5 border border-white/10 cursor-pointer hover:border-blue-400/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-400" data-future-kpi="existing" role="button" tabindex="0" aria-label="Detail rumus Budget Existing">
+                    <p class="text-[10px] font-bold uppercase text-slate-400 m-0">Budget Existing</p>
+                    <p id="futureBudgetTotalExisting" class="text-base font-black text-blue-400 mt-1 mb-0 tabular-nums">Rp 0</p>
+                </div>
+                <div class="glass-card rounded-xl p-3.5 border border-white/10 cursor-pointer hover:border-purple-400/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-400" data-future-kpi="reconcileActual" role="button" tabindex="0" aria-label="Detail nilai rekonsil tercatat">
+                    <p class="text-[10px] font-bold uppercase text-slate-400 m-0">Rekonsil Tercatat</p>
+                    <p id="futureBudgetTotalReconcile" class="text-base font-black text-purple-400 mt-1 mb-0 tabular-nums">Rp 0</p>
+                </div>
+                <div class="glass-card rounded-xl p-3.5 border border-white/10 cursor-pointer hover:border-emerald-400/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-400" data-future-kpi="totalPlan" role="button" tabindex="0" aria-label="Detail total anggaran masa depan">
+                    <p class="text-[10px] font-bold uppercase text-slate-400 m-0">Total Masa Depan</p>
+                    <p id="futureBudgetTotalPlan" class="text-base font-black text-emerald-400 mt-1 mb-0 tabular-nums">Rp 0</p>
+                </div>
+                <div class="glass-card rounded-xl p-3.5 border border-white/10 cursor-pointer hover:border-purple-400/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-400" data-future-kpi="predictedUsage" role="button" tabindex="0" aria-label="Detail prediksi aktual akhir tahun">
+                    <p class="text-[10px] font-bold uppercase text-slate-400 m-0">Prediksi Akhir Thn</p>
+                    <p id="futureBudgetPredictionUsage" class="text-base font-black text-purple-400 mt-1 mb-0 tabular-nums">Rp 0</p>
+                </div>
+                <div class="glass-card rounded-xl p-3.5 border border-white/10 cursor-pointer hover:border-teal-400/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-400" data-future-kpi="predictedNext" role="button" tabindex="0" aria-label="Detail prediksi anggaran tahun depan">
+                    <p class="text-[10px] font-bold uppercase text-slate-400 m-0">Prediksi Thn Depan</p>
+                    <p id="futureBudgetPredictionBudget" class="text-base font-black text-teal-400 mt-1 mb-0 tabular-nums">Rp 0</p>
+                    <p id="futureBudgetPredictionGrowth" class="text-[9px] text-slate-400 mt-0.5 mb-0">Kenaikan: —</p>
+                </div>
+                <div class="glass-card rounded-xl p-3.5 border border-white/10 cursor-pointer hover:border-emerald-400/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-400" data-future-kpi="growthReconcile" role="button" tabindex="0" aria-label="Detail perbandingan dengan proyeksi aktual">
+                    <p class="text-[10px] font-bold uppercase text-slate-400 m-0">vs Proyeksi Aktual Setahun</p>
+                    <p id="futureBudgetGrowthSummary" class="text-base font-black text-emerald-400 mt-1 mb-0">0%</p>
+                    <p id="futureBudgetGrowthBaseline" class="text-[9px] text-slate-400 mt-0.5 mb-0 truncate">Rek: Rp 0</p>
+                </div>
+                <div class="glass-card rounded-xl p-3.5 border border-white/10 cursor-pointer hover:border-blue-400/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-400" data-future-kpi="growthExisting" role="button" tabindex="0" aria-label="Detail perbandingan dengan budget existing">
+                    <p class="text-[10px] font-bold uppercase text-slate-400 m-0">vs Budget Existing</p>
+                    <p id="futureBudgetExistingGrowthSummary" class="text-base font-black text-blue-400 mt-1 mb-0">—</p>
+                    <p id="futureBudgetExistingGrowthDetail" class="text-[9px] text-slate-400 mt-0.5 mb-0 truncate">Exist: Rp 0</p>
+                </div>
+                <div class="glass-card rounded-xl p-3.5 border border-white/10 cursor-pointer hover:border-teal-400/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-400" data-future-kpi="accountAvg" role="button" tabindex="0" aria-label="Detail rata-rata asumsi per akun">
+                    <p class="text-[10px] font-bold uppercase text-slate-400 m-0" title="Rata-rata rate asumsi yang tersimpan pada baris yang tampil.">Rata2 Asumsi Baris</p>
+                    <p id="futureBudgetAccountAverageGrowth" class="text-base font-black text-teal-300 mt-1 mb-0">—</p>
+                    <p id="futureBudgetAccountAverageCount" class="text-[9px] text-slate-400 mt-0.5 mb-0">0 akun</p>
+                </div>
+            </div>
+
+            <!-- Table Container -->
+            <div class="glass-panel rounded-xl border border-white/10 overflow-hidden shadow-2xl">
+                <div class="p-4 border-b border-white/10 flex flex-wrap items-center justify-between gap-3 bg-slate-950/40">
+                    <div class="flex items-center gap-3 flex-1 min-w-[280px]">
+                        <input type="search" id="futureBudgetSearch" oninput="BudgetFutureModule.renderTable()" placeholder="Cari akun, dept, atau proyek..." class="form-input flex-1">
+                        <select id="futureBudgetDeptFilter" onchange="BudgetFutureModule.renderTable()" class="form-select w-48">
+                            <option value="">Semua Departemen</option>
+                        </select>
+                    </div>
+                    <span id="futureBudgetStatus" class="text-xs text-slate-400 font-semibold ml-auto"></span>
+                </div>
+                <div class="overflow-x-auto max-h-[60vh]">
+                    <table class="app-table">
+                        <thead class="sticky top-0 bg-slate-900/95 backdrop-blur z-10">
+                            <tr>
+                                <th class="w-12 text-center"><button type="button" class="bg-transparent p-0 font-[inherit] text-inherit hover:text-teal-200" data-future-detail="number">No</button></th>
+                                <th><button type="button" class="bg-transparent p-0 font-[inherit] text-inherit hover:text-teal-200" data-future-detail="account">Nama Akun</button></th>
+                                <th><button type="button" class="bg-transparent p-0 font-[inherit] text-inherit hover:text-teal-200" data-future-detail="department">Departemen</button></th>
+                                <th><button type="button" class="bg-transparent p-0 font-[inherit] text-inherit hover:text-teal-200" data-future-detail="project">Proyek UP</button></th>
+                                <th class="text-right"><button type="button" class="bg-transparent p-0 font-[inherit] text-inherit hover:text-teal-200" data-future-detail="actual">Rekonsil Aktual</button></th>
+                                <th class="text-right"><button type="button" class="bg-transparent p-0 font-[inherit] text-inherit hover:text-teal-200" data-future-detail="history">Proyeksi Aktual 12 Bulan</button></th>
+                                <th class="text-center"><button type="button" class="bg-transparent p-0 font-[inherit] text-inherit hover:text-teal-200" data-future-detail="rate">Asumsi</button></th>
+                                <th class="text-right"><button type="button" class="bg-transparent p-0 font-[inherit] text-inherit hover:text-teal-200" data-future-detail="month:jan">Jan</button></th>
+                                <th class="text-right"><button type="button" class="bg-transparent p-0 font-[inherit] text-inherit hover:text-teal-200" data-future-detail="month:feb">Feb</button></th>
+                                <th class="text-right"><button type="button" class="bg-transparent p-0 font-[inherit] text-inherit hover:text-teal-200" data-future-detail="month:mar">Mar</button></th>
+                                <th class="text-right"><button type="button" class="bg-transparent p-0 font-[inherit] text-inherit hover:text-teal-200" data-future-detail="month:apr">Apr</button></th>
+                                <th class="text-right"><button type="button" class="bg-transparent p-0 font-[inherit] text-inherit hover:text-teal-200" data-future-detail="month:mei">Mei</button></th>
+                                <th class="text-right"><button type="button" class="bg-transparent p-0 font-[inherit] text-inherit hover:text-teal-200" data-future-detail="month:jun">Jun</button></th>
+                                <th class="text-right"><button type="button" class="bg-transparent p-0 font-[inherit] text-inherit hover:text-teal-200" data-future-detail="month:jul">Jul</button></th>
+                                <th class="text-right"><button type="button" class="bg-transparent p-0 font-[inherit] text-inherit hover:text-teal-200" data-future-detail="month:agu">Agu</button></th>
+                                <th class="text-right"><button type="button" class="bg-transparent p-0 font-[inherit] text-inherit hover:text-teal-200" data-future-detail="month:sep">Sep</button></th>
+                                <th class="text-right"><button type="button" class="bg-transparent p-0 font-[inherit] text-inherit hover:text-teal-200" data-future-detail="month:okt">Okt</button></th>
+                                <th class="text-right"><button type="button" class="bg-transparent p-0 font-[inherit] text-inherit hover:text-teal-200" data-future-detail="month:nov">Nov</button></th>
+                                <th class="text-right"><button type="button" class="bg-transparent p-0 font-[inherit] text-inherit hover:text-teal-200" data-future-detail="month:des">Des</button></th>
+                                <th class="text-right bg-teal-950/30 text-teal-300"><button type="button" class="bg-transparent p-0 font-[inherit] text-inherit hover:text-teal-200" data-future-detail="total">Total Rencana</button></th>
+                                <th class="min-w-[320px]">Analisa Kenaikan</th>
+                                <th class="text-center">Aksi</th>
+                            </tr>
+                        </thead>
+                        <tbody id="futureBudgetTableBody" class="divide-y divide-white/5">
+                        </tbody>
+                        <tfoot id="futureBudgetTableFoot">
+                        </tfoot>
+                    </table>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Modal Add/Edit Future Budget Row -->
+    <div id="futureBudgetModal" class="modal-overlay fixed inset-0 z-50 flex items-center justify-center p-4 hidden opacity-0 transition-all duration-200">
+        <div class="glass-panel w-full max-w-2xl rounded-2xl p-6 border border-white/20 shadow-2xl relative" onclick="event.stopPropagation()">
+            <div class="flex justify-between items-center mb-5 pb-3 border-b border-white/10">
+                <h3 class="text-lg font-black text-white m-0">Kelola Rencana Anggaran Masa Depan</h3>
+                <button type="button" onclick="BudgetFutureModule.closeModal()" class="text-slate-400 hover:text-white text-xl">✕</button>
+            </div>
+            <form onsubmit="BudgetFutureModule.saveModalRow(event)" class="space-y-4">
+                <input type="hidden" id="fbModalRowId">
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                        <label class="form-label">Departemen</label>
+                        <input type="text" id="fbModalDept" required class="form-input" placeholder="Contoh: Operasional">
+                    </div>
+                    <div>
+                        <label class="form-label">Nama Akun</label>
+                        <input type="text" id="fbModalAkun" required class="form-input" placeholder="Contoh: Biaya Bahan Bakar Solar">
+                    </div>
+                </div>
+                <div>
+                    <label class="form-label">Proyek UP</label>
+                    <input type="text" id="fbModalProyek" class="form-input" placeholder="Contoh: IUP Baramarta / Site Tambang">
+                </div>
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 bg-slate-950/40 p-3 rounded-xl border border-white/5">
+                    <div>
+                        <label class="form-label">Nilai History (Rp)</label>
+                        <input type="number" id="fbModalHistory" oninput="BudgetFutureModule.applyHistoryCalculationToModal()" class="form-input" placeholder="0">
+                    </div>
+                    <div>
+                        <label class="form-label">Asumsi Kenaikan (%)</label>
+                        <input type="number" id="fbModalRate" step="0.1" oninput="BudgetFutureModule.applyHistoryCalculationToModal()" class="form-input" placeholder="5">
+                    </div>
+                    <div>
+                        <label class="form-label">Total Rencana</label>
+                        <div id="fbModalTotalPreview" class="text-lg font-black text-emerald-400 mt-2">Rp 0</div>
+                    </div>
+                </div>
+                <div>
+                    <label class="form-label mb-2">Sebaran Rencana 12 Bulan (Januari - Desember)</label>
+                    <div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2">
+                        <div><span class="text-[10px] text-slate-400">Jan</span><input type="number" id="fbModal_jan" oninput="BudgetFutureModule.calculateModalTotal()" class="form-input p-1.5 text-xs text-right"></div>
+                        <div><span class="text-[10px] text-slate-400">Feb</span><input type="number" id="fbModal_feb" oninput="BudgetFutureModule.calculateModalTotal()" class="form-input p-1.5 text-xs text-right"></div>
+                        <div><span class="text-[10px] text-slate-400">Mar</span><input type="number" id="fbModal_mar" oninput="BudgetFutureModule.calculateModalTotal()" class="form-input p-1.5 text-xs text-right"></div>
+                        <div><span class="text-[10px] text-slate-400">Apr</span><input type="number" id="fbModal_apr" oninput="BudgetFutureModule.calculateModalTotal()" class="form-input p-1.5 text-xs text-right"></div>
+                        <div><span class="text-[10px] text-slate-400">Mei</span><input type="number" id="fbModal_mei" oninput="BudgetFutureModule.calculateModalTotal()" class="form-input p-1.5 text-xs text-right"></div>
+                        <div><span class="text-[10px] text-slate-400">Jun</span><input type="number" id="fbModal_jun" oninput="BudgetFutureModule.calculateModalTotal()" class="form-input p-1.5 text-xs text-right"></div>
+                        <div><span class="text-[10px] text-slate-400">Jul</span><input type="number" id="fbModal_jul" oninput="BudgetFutureModule.calculateModalTotal()" class="form-input p-1.5 text-xs text-right"></div>
+                        <div><span class="text-[10px] text-slate-400">Agu</span><input type="number" id="fbModal_agu" oninput="BudgetFutureModule.calculateModalTotal()" class="form-input p-1.5 text-xs text-right"></div>
+                        <div><span class="text-[10px] text-slate-400">Sep</span><input type="number" id="fbModal_sep" oninput="BudgetFutureModule.calculateModalTotal()" class="form-input p-1.5 text-xs text-right"></div>
+                        <div><span class="text-[10px] text-slate-400">Okt</span><input type="number" id="fbModal_okt" oninput="BudgetFutureModule.calculateModalTotal()" class="form-input p-1.5 text-xs text-right"></div>
+                        <div><span class="text-[10px] text-slate-400">Nov</span><input type="number" id="fbModal_nov" oninput="BudgetFutureModule.calculateModalTotal()" class="form-input p-1.5 text-xs text-right"></div>
+                        <div><span class="text-[10px] text-slate-400">Des</span><input type="number" id="fbModal_des" oninput="BudgetFutureModule.calculateModalTotal()" class="form-input p-1.5 text-xs text-right"></div>
+                    </div>
+                </div>
+                <div class="flex justify-end gap-3 pt-3 border-t border-white/10">
+                    <button type="button" onclick="BudgetFutureModule.closeModal()" class="btn btn-secondary">Batal</button>
+                    <button type="submit" class="btn btn-primary">Simpan Rencana</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal Pindah Transaksi Akun -->
+    <div id="futureBudgetMoveModal" class="modal-overlay fixed inset-0 z-50 flex items-center justify-center p-4 hidden opacity-0 transition-all duration-200">
+        <div class="glass-panel w-full max-w-md rounded-2xl p-6 border border-white/20 shadow-2xl relative" onclick="event.stopPropagation()">
+            <div class="flex justify-between items-center mb-5 pb-3 border-b border-white/10">
+                <h3 class="text-lg font-black text-white m-0">⇄ Pindah Anggaran Antar Akun</h3>
+                <button type="button" onclick="BudgetFutureModule.closeMoveModal()" class="text-slate-400 hover:text-white text-xl">✕</button>
+            </div>
+            <form onsubmit="BudgetFutureModule.executeMove(event)" class="space-y-4">
+                <div>
+                    <label class="form-label">Akun Sumber (Asal)</label>
+                    <select id="fbMoveSourceAkun" required class="form-select w-full"></select>
+                </div>
+                <div>
+                    <label class="form-label">Akun Tujuan (Penerima)</label>
+                    <select id="fbMoveTargetAkun" required class="form-select w-full"></select>
+                </div>
+                <div>
+                    <label class="form-label">Persentase Pengalihan (%)</label>
+                    <input type="number" id="fbMovePercent" min="1" max="100" value="100" required class="form-input" placeholder="100">
+                    <p class="text-[10px] text-slate-400 mt-1">Masukkan 100% untuk memindahkan seluruh plafon 12 bulan.</p>
+                </div>
+                <div class="flex justify-end gap-3 pt-3 border-t border-white/10">
+                    <button type="button" onclick="BudgetFutureModule.closeMoveModal()" class="btn btn-secondary">Batal</button>
+                    <button type="submit" class="btn btn-primary">Pindahkan Anggaran</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="futureBudgetDetailModal" class="modal-overlay fixed inset-0 z-[70] hidden items-center justify-center bg-slate-950/80 p-4 opacity-0 backdrop-blur-sm transition-opacity duration-200" onclick="if(event.target===this) BudgetFutureModule.closeCalculationDetail()">
+        <section class="glass-panel w-full max-w-2xl overflow-hidden rounded-xl border border-teal-300/25 shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="futureBudgetDetailTitle">
+            <header class="flex items-center justify-between gap-4 border-b border-white/10 bg-slate-950/60 px-5 py-4">
+                <div>
+                    <span class="text-[10px] font-black uppercase text-teal-300">Rincian Anggaran</span>
+                    <h3 id="futureBudgetDetailTitle" class="m-0 mt-1 text-base font-black text-white">Detail Perhitungan</h3>
+                </div>
+                <button id="futureBudgetDetailClose" type="button" onclick="BudgetFutureModule.closeCalculationDetail()" class="rounded p-2 text-slate-400 hover:bg-white/5 hover:text-white" aria-label="Tutup detail">✕</button>
+            </header>
+            <div class="max-h-[70vh] space-y-4 overflow-y-auto p-5">
+                <div class="border-b border-white/10 pb-3">
+                    <p class="m-0 text-[10px] font-bold uppercase text-slate-500">Hasil</p>
+                    <p id="futureBudgetDetailResult" class="m-0 mt-1 break-words text-lg font-black tabular-nums text-emerald-300"></p>
+                </div>
+                <div>
+                    <p class="m-0 text-[10px] font-bold uppercase text-slate-500">Rumus / Cara Hitung</p>
+                    <p id="futureBudgetDetailFormula" class="m-0 mt-1 whitespace-pre-line break-words text-sm leading-6 text-slate-200"></p>
+                </div>
+                <div>
+                    <p class="m-0 text-[10px] font-bold uppercase text-slate-500">Sumber dan Komponen</p>
+                    <p id="futureBudgetDetailSource" class="m-0 mt-1 whitespace-pre-line break-words text-xs leading-5 text-slate-400"></p>
+                </div>
+                <div class="border-t border-white/10 pt-3">
+                    <p class="m-0 text-[10px] font-bold uppercase text-slate-500">Alasan / Interpretasi</p>
+                    <p id="futureBudgetDetailReason" class="m-0 mt-1 whitespace-pre-line break-words text-xs leading-5 text-slate-300"></p>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <!-- Scripts -->
+    <script src="js/config.js?v=20261105-goa"></script>
+    <script src="js/utils/formatters.js?v=upload-safety-1"></script>
+    <script src="js/core.js?v=20261105-goa"></script>
+    <script src="js/modules/upload.js?v=20261104-budget-ytd-range-fix"></script>
+    <script src="js/layout.js?v=20261102-upload-preview-wide"></script>
+    <script src="js/modules/budget-future.js?v=20261102-seasonal-annual-baseline"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', async () => {
+            await SmartBaraCore.init();
+            await SmartBaraLayout.init('budget-future');
+            await BudgetFutureModule.init();
+        });
+    </script>
+</body>
+</html>
+

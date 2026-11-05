@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Penyelarasan Nama Akun - Smart BARA 7.10 HZ</title>
+    <link rel="stylesheet" href="css/app.css?v=20261102-smooth-loading">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body class="bg-[#090d16] text-slate-100 flex h-screen overflow-hidden">
+    <aside id="appSidebar" class="w-64 glass-panel border-r border-white/10 flex flex-col z-40 fixed inset-y-0 left-0 transition-transform duration-200 lg:static lg:translate-x-0 -translate-x-full"></aside>
+    <div class="flex-1 flex flex-col min-w-0 overflow-hidden">
+        <header id="appHeader" class="glass-panel border-b border-white/10 px-6 py-3.5 flex items-center justify-between z-20"></header>
+        <main class="flex-1 overflow-y-auto p-4 sm:p-6 space-y-5">
+            <section class="glass-panel flex flex-col gap-5 rounded-xl border border-white/10 bg-gradient-to-r from-slate-900 via-slate-900/90 to-emerald-950/30 p-5 shadow-xl xl:flex-row xl:items-end xl:justify-between">
+                <div>
+                    <span class="badge badge-teal mb-2">Analisa Read-only</span>
+                    <h2 class="m-0 text-2xl font-black text-white">Penyelarasan Nama Akun</h2>
+                    <p class="m-0 mt-2 max-w-3xl text-xs leading-5 text-slate-400">Bandingkan akun Budget Plan dengan seluruh akun dan transaksi realisasi. Rekomendasi hanya untuk analisa; halaman ini tidak mengubah budget maupun laporan.</p>
+                </div>
+                <div class="flex flex-wrap items-end gap-2">
+                    <label class="text-[10px] font-bold uppercase text-slate-400">Asumsi buffer budget (%)
+                        <input id="alignmentRate" type="number" min="-100" max="500" step="0.5" value="5" class="form-input mt-1 w-32 text-sm" aria-label="Persentase buffer budget rekomendasi">
+                    </label>
+                    <button id="alignmentRefreshButton" type="button" onclick="AccountAlignmentModule.update(true)" class="btn btn-secondary whitespace-nowrap">⟳ Analisa Ulang</button>
+                    <button id="alignmentExportButton" type="button" onclick="AccountAlignmentModule.exportExcel()" class="btn btn-primary whitespace-nowrap">Export Excel</button>
+                </div>
+            </section>
+
+            <section class="grid grid-cols-2 gap-3 xl:grid-cols-5">
+                <div class="glass-card border border-white/10 p-4"><p class="m-0 text-[10px] font-bold uppercase text-slate-400">Transaksi Dianalisa</p><p id="alignmentTransactionCount" class="mb-0 mt-1 text-xl font-black text-white">0</p></div>
+                <div class="glass-card border border-white/10 p-4"><p class="m-0 text-[10px] font-bold uppercase text-slate-400">Kecocokan Akun Tepat</p><p id="alignmentMatchRate" class="mb-0 mt-1 text-xl font-black text-emerald-300">0%</p></div>
+                <div class="glass-card border border-white/10 p-4"><p class="m-0 text-[10px] font-bold uppercase text-slate-400">Akun Budget Plan</p><p id="alignmentBudgetAccountCount" class="mb-0 mt-1 text-xl font-black text-teal-200">0</p></div>
+                <div class="glass-card border border-white/10 p-4"><p class="m-0 text-[10px] font-bold uppercase text-slate-400">Transaksi Perlu Tinjau</p><p id="alignmentReviewCount" class="mb-0 mt-1 text-xl font-black text-amber-300">0</p></div>
+                <div class="glass-card col-span-2 border border-white/10 p-4 xl:col-span-1"><p class="m-0 text-[10px] font-bold uppercase text-slate-400">Nilai Rekonsil Dianalisa</p><p id="alignmentAnnualActual" class="mb-0 mt-1 break-words text-lg font-black text-sky-300">Rp 0</p></div>
+            </section>
+
+            <section class="rounded-lg border border-teal-400/20 bg-teal-500/[0.05] px-4 py-3 text-[11px] leading-5 text-slate-300">
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                    <strong class="text-teal-200">Aturan rekomendasi</strong>
+                    <span id="alignmentPeriodLabel" class="text-slate-400">Memuat periode...</span>
+                </div>
+                <p class="mb-0 mt-1">Analisa memakai kecocokan nama, kata kunci kategori pada keterangan (misalnya BBM/bensin, kebutuhan dapur, dan ATK), serta pola histori transaksi yang sudah cocok. Transaksi dalam satu akun sumber dapat memiliki rekomendasi berbeda. Budget rekomendasi = nilai Rekonsil terarah ÷ bulan berjalan × 12 × (1 + buffer).</p>
+            </section>
+
+            <section class="glass-panel overflow-hidden rounded-xl border border-white/10">
+                <div class="flex flex-col gap-3 border-b border-white/10 p-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                        <h3 class="m-0 text-sm font-black text-white">Akun Budget Plan dan Rekomendasi Budget</h3>
+                        <p class="m-0 mt-1 text-[10px] text-slate-400">Nilai budget dihitung dari pemakaian akun realisasi yang cocok atau direkomendasikan.</p>
+                    </div>
+                    <input id="alignmentSearch" type="search" class="form-input w-full text-xs sm:max-w-sm" placeholder="Cari akun, departemen, atau tipe transaksi..." aria-label="Cari akun dan transaksi">
+                </div>
+                <div class="max-h-[55vh] overflow-auto">
+                    <table class="app-table min-w-[1320px]">
+                        <thead class="sticky top-0 z-10 bg-slate-900">
+                            <tr><th>Nama Akun Budget Ideal</th><th>Nama Akun Realisasi</th><th class="text-right">Budget Tahunan</th><th class="text-right">Rekonsil Terarah</th><th class="text-right">Proyeksi Aktual</th><th class="text-right">Rekomendasi Budget</th><th class="text-right">Selisih</th><th>Tipe Transaksi</th></tr>
+                        </thead>
+                        <tbody id="alignmentBudgetTableBody" class="divide-y divide-white/5"><tr><td colspan="8" class="py-8 text-center text-slate-500">Memuat analisa...</td></tr></tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section class="glass-panel overflow-hidden rounded-xl border border-white/10">
+                <div class="border-b border-white/10 p-4">
+                    <h3 class="m-0 text-sm font-black text-white">Nama Akun Realisasi dan Saran Penyelarasan</h3>
+                    <p class="m-0 mt-1 text-[10px] text-slate-400">Kecocokan atau rekomendasi ditampilkan per nama akun aktual berdasarkan seluruh transaksi yang ditemukan.</p>
+                </div>
+                <div class="max-h-[55vh] overflow-auto">
+                    <table class="app-table min-w-[1240px]">
+                        <thead class="sticky top-0 z-10 bg-slate-900">
+                            <tr><th>Nama Akun Realisasi</th><th>Departemen</th><th>Status</th><th>Rekomendasi Akun Budget</th><th class="text-right">Transaksi</th><th class="text-right">Nilai Rekonsil</th><th class="text-right">Keyakinan</th><th>Contoh Tipe Transaksi</th></tr>
+                        </thead>
+                        <tbody id="alignmentActualTableBody" class="divide-y divide-white/5"><tr><td colspan="8" class="py-8 text-center text-slate-500">Memuat analisa...</td></tr></tbody>
+                    </table>
+                </div>
+            </section>
+            <p id="alignmentStatus" class="m-0 text-right text-[10px] text-slate-500" role="status" aria-live="polite">Menyiapkan analisa...</p>
+        </main>
+    </div>
+    <script src="js/config.js?v=20261105-goa"></script>
+    <script src="js/utils/formatters.js?v=upload-safety-1"></script>
+    <script src="js/core.js?v=20261105-goa"></script>
+    <script src="js/modules/upload.js?v=20261104-budget-ytd-range-fix"></script>
+    <script src="js/layout.js?v=20261102-account-alignment-menu"></script>
+    <script src="js/modules/account-alignment.js?v=20261102-department-filter-scope-2"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', async () => {
+            await window.SmartBaraCore.init();
+            await window.SmartBaraLayout.init('account-alignment');
+            await window.AccountAlignmentModule.init();
+        });
+    </script>
+</body>
+</html>

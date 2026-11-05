@@ -1,0 +1,16 @@
+.andromity/
+.vercel
+.env*
+
+# Data bisnis dan data aset, jangan masuk git
+data/
+*.xls
+*.xlsx
+smart-asset-project/db.json
+smart-asset-project/data.json
+smart-asset-project/data.js
+
+# File lokal
+.DS_Store
+__pycache__/
+supabase/.temp/

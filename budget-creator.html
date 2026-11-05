@@ -1,0 +1,354 @@
+﻿<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Budget Creator Planning - Smart BARA 7.10 HZ</title>
+    <link rel="stylesheet" href="css/app.css?v=20261102-smooth-loading">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body class="bg-[#090d16] text-slate-100 flex h-screen overflow-hidden">
+
+    <!-- Sidebar Navigation -->
+    <aside id="appSidebar" class="w-64 glass-panel border-r border-white/10 flex flex-col z-40 fixed inset-y-0 left-0 transition-transform duration-200 lg:static lg:translate-x-0 -translate-x-full">
+    </aside>
+
+    <!-- Main Content Area -->
+    <div class="flex-1 flex flex-col min-w-0 overflow-hidden">
+        <!-- Top Navigation Header -->
+        <header id="appHeader" class="glass-panel border-b border-white/10 px-6 py-3.5 flex items-center justify-between z-20">
+        </header>
+
+        <!-- Page View Body -->
+        <main class="flex-1 overflow-y-auto p-6 space-y-6">
+            <!-- Action Toolbar Banner -->
+            <div class="glass-panel rounded-2xl p-6 border border-white/10 flex flex-col xl:flex-row xl:items-center xl:justify-between gap-5 bg-gradient-to-r from-slate-900 via-slate-900/90 to-teal-950/40 shadow-xl">
+                <div>
+                    <span class="badge badge-teal mb-2">Permintaan Pembelian & Pengadaan</span>
+                    <h2 class="text-2xl font-black text-white m-0 tracking-tight">Budget Creator Planning</h2>
+                    <p class="text-xs text-slate-400 mt-1 max-w-2xl leading-relaxed m-0">
+                        Rencanakan kebutuhan belanja per departemen dengan standarisasi nama akun & proyek UP. Template Excel mengikuti format import dan dilengkapi dropdown master database.
+                    </p>
+                </div>
+                <div class="flex flex-wrap items-center gap-2.5">
+                    <button type="button" onclick="BudgetCreatorModule.openAiDialog()" class="btn bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-200 border border-emerald-400/30">
+                        ✦ Buat Budget AI
+                    </button>
+                    <a href="ai-settings.html" class="btn btn-secondary">⚙️ Pengaturan AI</a>
+                    <button type="button" onclick="BudgetCreatorModule.downloadTemplate()" class="btn btn-secondary">
+                        📤 Download Template
+                    </button>
+                    <button type="button" onclick="BudgetCreatorModule.exportExcel()" class="btn btn-secondary">
+                        📊 Export Excel
+                    </button>
+                    <button type="button" onclick="document.getElementById('creatorImportFileInput').click()" class="btn btn-primary">
+                        📥 Import Excel
+                    </button>
+                    <input type="file" id="creatorImportFileInput" accept=".xlsx,.xls" class="hidden" onchange="BudgetCreatorModule.importExcel(event)">
+                    <button type="button" onclick="BudgetCreatorModule.openForm()" class="btn bg-emerald-600 hover:bg-emerald-500 text-white font-bold">
+                        + Tambah Kebutuhan
+                    </button>
+                </div>
+            </div>
+
+            <!-- KPI Summary Cards -->
+            <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                <div class="glass-card rounded-xl p-4 border border-white/10">
+                    <p class="text-[11px] font-bold text-slate-400 uppercase tracking-wider m-0">Total Kebutuhan</p>
+                    <p class="text-2xl font-black text-white mt-1 mb-0 stat-value" id="creatorStatCount">0</p>
+                </div>
+                <div class="glass-card rounded-xl p-4 border border-white/10">
+                    <p class="text-[11px] font-bold text-slate-400 uppercase tracking-wider m-0">Estimasi Total Biaya</p>
+                    <p class="text-2xl font-black text-teal-400 mt-1 mb-0 stat-value" id="creatorStatTotal">Rp 0</p>
+                </div>
+                <div class="glass-card rounded-xl p-4 border border-white/10">
+                    <p class="text-[11px] font-bold text-slate-400 uppercase tracking-wider m-0">Prioritas Tinggi</p>
+                    <p class="text-2xl font-black text-rose-400 mt-1 mb-0 stat-value" id="creatorStatHigh">0</p>
+                </div>
+                <div class="glass-card rounded-xl p-4 border border-white/10">
+                    <p class="text-[11px] font-bold text-slate-400 uppercase tracking-wider m-0">Menunggu Disetujui</p>
+                    <p class="text-2xl font-black text-amber-400 mt-1 mb-0 stat-value" id="creatorStatPending">0</p>
+                </div>
+            </div>
+
+            <!-- Filter & Search Bar -->
+            <div class="glass-panel rounded-xl p-4 border border-white/10 flex flex-wrap items-center gap-3">
+                <input type="search" id="creatorSearch" oninput="BudgetCreatorModule.renderTable()" placeholder="Cari barang, akun, proyek, atau ID AI..." class="form-input flex-1 min-w-[200px]">
+                <select id="creatorDeptFilter" onchange="BudgetCreatorModule.renderTable()" class="form-select w-44">
+                    <option value="">Semua Departemen</option>
+                </select>
+                <select id="creatorStatusFilter" onchange="BudgetCreatorModule.renderTable()" class="form-select w-40">
+                    <option value="">Semua Status</option>
+                    <option value="Draft">Draft</option>
+                    <option value="Diajukan">Diajukan</option>
+                    <option value="Disetujui">Disetujui</option>
+                    <option value="Ditolak">Ditolak</option>
+                </select>
+                <span id="creatorStatusText" class="text-xs text-slate-400 font-semibold ml-auto"></span>
+            </div>
+
+            <!-- Data Table Container -->
+            <div class="glass-panel rounded-xl border border-white/10 overflow-hidden shadow-2xl">
+                <div class="overflow-x-auto max-h-[60vh]">
+                    <table class="app-table">
+                        <thead>
+                            <tr>
+                                <th class="w-14 text-center">No</th>
+                                <th>Departemen</th>
+                                <th>Nama Akun</th>
+                                <th>Nama Proyek UP</th>
+                                <th>ID Budget AI</th>
+                                <th>Kebutuhan / Barang</th>
+                                <th>Spesifikasi</th>
+                                <th>Catatan Analisa</th>
+                                <th>Tanggal Dibutuhkan</th>
+                                <th class="text-right">Qty</th>
+                                <th class="text-right">Harga Satuan</th>
+                                <th class="text-right">Estimasi Total</th>
+                                <th class="text-center">Prioritas</th>
+                                <th class="text-center">Status</th>
+                                <th class="text-right">Aksi</th>
+                            </tr>
+                        </thead>
+                        <tbody id="creatorTableBody" class="divide-y divide-white/5">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <div id="creatorAiModal" class="modal-overlay fixed inset-0 z-[9200] hidden flex items-center justify-center p-0 opacity-0 transition-all duration-200" onclick="if(event.target===this) BudgetCreatorModule.closeAiDialog()">
+        <section class="glass-panel flex h-full max-h-full w-full max-w-none flex-col overflow-hidden rounded-none border border-emerald-300/25 shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="creatorAiTitle">
+            <header class="flex items-center justify-between gap-4 border-b border-white/10 bg-slate-950/60 px-5 py-4">
+                <div class="min-w-0">
+                    <span class="text-[10px] font-black uppercase text-emerald-300">Budget Creator</span>
+                    <h3 id="creatorAiTitle" class="m-0 mt-1 text-lg font-black text-white">Buat Budget AI</h3>
+                </div>
+                <button type="button" onclick="BudgetCreatorModule.closeAiDialog()" class="text-xl text-slate-400 hover:text-white" aria-label="Tutup dialog">×</button>
+            </header>
+            <div class="grid min-h-0 flex-1 auto-rows-max grid-cols-1 overflow-y-auto lg:auto-rows-fr lg:grid-cols-[minmax(300px,.78fr)_minmax(0,1.55fr)]">
+                <section class="flex min-h-0 flex-col overflow-visible border-b border-white/10 lg:overflow-y-auto lg:border-b-0 lg:border-r">
+                    <div id="creatorAiChatMessages" class="min-h-0 max-h-[25vh] flex-1 space-y-3 overflow-y-auto p-4" role="log" aria-live="polite"></div>
+                    <div class="border-t border-white/10 bg-slate-950/30 p-4">
+                        <div class="mb-3 grid grid-cols-2 rounded-lg border border-white/10 bg-slate-950/60 p-1" role="group" aria-label="Mode pembuatan budget">
+                            <label class="cursor-pointer">
+                                <input type="radio" name="creatorAiMode" value="description" class="peer sr-only" checked>
+                                <span class="block rounded-md px-2 py-2 text-center text-xs font-bold text-slate-400 peer-checked:bg-teal-500/20 peer-checked:text-teal-200">Deskripsi</span>
+                            </label>
+                            <label class="cursor-pointer">
+                                <input type="radio" name="creatorAiMode" value="manual" class="peer sr-only">
+                                <span class="block rounded-md px-2 py-2 text-center text-xs font-bold text-slate-400 peer-checked:bg-teal-500/20 peer-checked:text-teal-200">Prediksi Manual</span>
+                            </label>
+                        </div>
+                        <div id="creatorAiDescriptionPanel">
+                            <label for="creatorAiPrompt" class="mb-1.5 block text-xs font-bold text-slate-300">Deskripsi kebutuhan</label>
+                            <textarea id="creatorAiPrompt" rows="4" oninput="BudgetCreatorModule.previewAiDraft()" class="form-textarea w-full resize-y" placeholder="Contoh: GA, akun ATK, proyek Site Bara 1: anggaran kertas Rp12 juta setahun, dibagi rata per bulan."></textarea>
+                            <p id="creatorAiPromptGuide" class="m-0 mt-1.5 min-h-8 text-[10px] leading-4 text-slate-400" aria-live="polite">Format: Departemen; Akun; Proyek; Kebutuhan; jumlah dan satuan; total tahunan atau harga; tanggal; prioritas; spesifikasi.</p>
+                            <div class="mt-2 flex justify-end">
+                                <button type="button" onclick="BudgetCreatorModule.sendAiMessage()" class="btn btn-primary text-xs">Susun Preview AI</button>
+                            </div>
+                        </div>
+                        <div id="creatorAiManualPanel" class="hidden space-y-3">
+                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                <label class="block text-xs font-bold text-slate-300">Departemen
+                                    <select id="creatorAiManualDepartment" class="form-select mt-1 w-full text-xs"></select>
+                                </label>
+                                <label class="block text-xs font-bold text-slate-300">Nama Akun
+                                    <select id="creatorAiManualAccount" class="form-select mt-1 w-full text-xs"></select>
+                                </label>
+                                <label class="block text-xs font-bold text-slate-300">Anggaran rutin bulanan?
+                                    <select id="creatorAiManualRecurrence" class="form-select mt-1 w-full text-xs">
+                                        <option value="yes">Ya, rutin bulanan</option>
+                                        <option value="no">Tidak, satu kali</option>
+                                    </select>
+                                </label>
+                                <div class="block text-xs font-bold text-slate-300 sm:col-span-2">
+                                    <label for="creatorAiManualProjectSearch">Nama Proyek UP (centang satu atau lebih)</label>
+                                    <input id="creatorAiManualProjectSearch" type="search" class="form-input mt-1 w-full text-xs" placeholder="Cari proyek...">
+                                    <div class="mt-1 flex gap-1.5">
+                                        <input id="creatorAiManualProjectNew" type="text" class="form-input min-w-0 flex-1 text-xs" placeholder="Nama proyek baru">
+                                        <button id="creatorAiManualProjectAdd" type="button" class="btn btn-secondary px-2.5 text-[11px]" aria-label="Tambah proyek">+ Tambah</button>
+                                    </div>
+                                    <div id="creatorAiManualProjectOptions" class="mt-1 max-h-32 overflow-y-auto rounded-md border border-white/10 bg-slate-950/60 p-2" role="group" aria-label="Pilih beberapa proyek UP">
+                                        <p class="m-0 text-[10px] text-slate-500">Daftar proyek akan dimuat.</p>
+                                    </div>
+                                    <p id="creatorAiManualProjectCount" class="m-0 mt-1 text-[10px] font-normal text-slate-400" aria-live="polite">0 proyek dipilih</p>
+                                </div>
+                                <label class="block text-xs font-bold text-slate-300 sm:col-span-2">Kebutuhan / Barang
+                                    <input id="creatorAiManualItem" type="text" class="form-input mt-1 w-full text-xs" placeholder="Nama barang atau kebutuhan">
+                                </label>
+                                <label class="block text-xs font-bold text-slate-300 sm:col-span-2">Spesifikasi / Alasan
+                                    <input id="creatorAiManualSpecification" type="text" class="form-input mt-1 w-full text-xs" placeholder="Opsional">
+                                </label>
+                                <div id="creatorAiManualOneTimeDate" class="hidden grid grid-cols-2 gap-3 sm:col-span-2">
+                                    <label class="block text-xs font-bold text-slate-300">Bulan alokasi
+                                        <select id="creatorAiManualMonth" class="form-select mt-1 w-full text-xs">
+                                            <option value="1">Januari</option><option value="2">Februari</option><option value="3">Maret</option><option value="4">April</option><option value="5">Mei</option><option value="6">Juni</option><option value="7">Juli</option><option value="8">Agustus</option><option value="9">September</option><option value="10">Oktober</option><option value="11">November</option><option value="12">Desember</option>
+                                        </select>
+                                    </label>
+                                    <label class="block text-xs font-bold text-slate-300">Tanggal alokasi
+                                        <input id="creatorAiManualDay" type="number" min="1" max="31" value="1" class="form-input mt-1 w-full text-xs">
+                                    </label>
+                                </div>
+                                <label class="block text-xs font-bold text-slate-300">Jumlah per alokasi
+                                    <input id="creatorAiManualQuantity" type="number" min="0.01" step="any" value="1" class="form-input mt-1 w-full text-xs">
+                                </label>
+                                <label class="block text-xs font-bold text-slate-300">Satuan
+                                    <select id="creatorAiManualUnit" class="form-select mt-1 w-full text-xs"></select>
+                                </label>
+                                <label class="block text-xs font-bold text-slate-300">Total budget (Rp)
+                                    <div class="mt-1 flex gap-1.5">
+                                        <input id="creatorAiManualAnnualBudget" type="number" min="0" step="1000" class="form-input min-w-0 flex-1 text-xs" placeholder="0">
+                                        <button id="creatorAiRecommendButton" type="button" onclick="BudgetCreatorModule.recommendManualBudget()" class="btn btn-secondary px-2.5 text-[11px]" title="Rekomendasikan dari histori, rekonsil, dan riset web" aria-label="Rekomendasi budget dengan AI">✦ AI</button>
+                                    </div>
+                                </label>
+                                <label class="block text-xs font-bold text-slate-300">Tahun budget
+                                    <select id="creatorAiManualYear" class="form-select mt-1 w-full text-xs"></select>
+                                </label>
+                                <label class="block text-xs font-bold text-slate-300 sm:col-span-2">Prioritas
+                                    <select id="creatorAiManualPriority" class="form-select mt-1 w-full text-xs"><option>Normal</option><option>Tinggi</option><option>Rendah</option></select>
+                                </label>
+                                <label class="block text-xs font-bold text-slate-300 sm:col-span-2">Catatan analisa kenaikan
+                                    <textarea id="creatorAiManualNote" rows="3" class="form-textarea mt-1 w-full text-xs" placeholder="Catatan dan asumsi rekomendasi AI akan muncul di sini."></textarea>
+                                </label>
+                                <div id="creatorAiManualSources" class="hidden sm:col-span-2 space-y-1 text-[10px] text-slate-400"></div>
+                                <p id="creatorAiManualStatus" class="m-0 sm:col-span-2 text-[10px] text-slate-500" role="status" aria-live="polite"></p>
+                            </div>
+                            <p class="m-0 text-[11px] text-slate-500">Budget rutin dibagi rata ke 12 bulan; budget satu kali dialokasikan penuh pada tanggal yang dipilih. Total dibagi rata ke proyek terpilih. Tahun tersedia hingga 15 tahun ke depan. Riset mengirim konteks akun, barang, dan histori ke Gemini Google Search; kuota/biaya vendor dapat berlaku. Periksa angka dan sumber sebelum dipakai.</p>
+                        </div>
+                    </div>
+                </section>
+                <section class="flex min-h-0 min-w-0 flex-col">
+                    <div class="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 p-4">
+                        <div>
+                            <h4 class="m-0 text-sm font-black text-white">Preview Budget</h4>
+                            <p id="creatorAiPreviewCount" class="m-0 mt-1 text-[10px] text-slate-400">0 baris</p>
+                        </div>
+                        <div class="flex min-w-0 items-center gap-1.5">
+                            <input id="creatorAiBudgetSearchId" type="search" class="form-input w-40 text-[10px]" placeholder="ID Budget 6 karakter..." aria-label="Cari ID Budget AI untuk diedit">
+                            <button type="button" onclick="BudgetCreatorModule.loadAiBudgetById()" class="btn btn-secondary whitespace-nowrap px-2 py-1 text-[10px]">Muat ID</button>
+                        </div>
+                        <button id="creatorAiBudgetId" type="button" onclick="BudgetCreatorModule.copyAiBudgetId()" class="btn btn-secondary max-w-[220px] truncate px-2 py-1 font-mono text-[10px]" title="Salin ID batch budget AI" aria-label="Salin ID batch budget AI">ID belum dibuat</button>
+                        <div class="flex items-center gap-3">
+                            <span id="creatorAiPreviewTotal" class="text-sm font-black tabular-nums text-emerald-300">Rp 0</span>
+                            <button type="button" onclick="BudgetCreatorModule.addAiDraftRow()" class="btn btn-secondary text-xs">+ Baris</button>
+                        </div>
+                    </div>
+                    <div class="min-h-0 flex-1 overflow-auto">
+                        <table class="app-table min-w-[1720px]">
+                            <thead class="sticky top-0 z-10 bg-slate-900">
+                                <tr><th>Departemen</th><th>Nama Akun</th><th>Nama Proyek UP</th><th>Kebutuhan / Barang</th><th>Spesifikasi</th><th>Catatan</th><th>Tanggal Dibutuhkan</th><th class="text-right">Qty</th><th class="text-right">Harga Satuan</th><th class="text-right">Estimasi Total</th><th class="text-center">Prioritas</th><th class="text-center">Status</th><th class="text-right">Aksi</th></tr>
+                            </thead>
+                            <tbody id="creatorAiPreviewBody" class="divide-y divide-white/5"></tbody>
+                        </table>
+                    </div>
+                    <footer class="flex flex-wrap items-center justify-between gap-3 border-t border-white/10 bg-slate-950/30 p-4">
+                        <span id="creatorAiImportStatus" class="text-xs text-slate-400"></span>
+                        <div class="flex gap-2">
+                            <button type="button" onclick="BudgetCreatorModule.closeAiDialog()" class="btn btn-secondary text-xs">Batal</button>
+                            <button id="creatorAiImportButton" type="button" onclick="BudgetCreatorModule.importAiDraft()" class="btn btn-primary text-xs" disabled>Import ke Database</button>
+                        </div>
+                    </footer>
+                </section>
+            </div>
+        </section>
+    </div>
+
+    <!-- Modal Form (Tambah / Edit Kebutuhan) -->
+    <div id="creatorFormModal" class="modal-overlay fixed inset-0 z-50 flex items-center justify-center p-4 hidden opacity-0 transition-all duration-200" onclick="if(event.target===this) BudgetCreatorModule.closeForm()">
+        <div class="glass-panel w-full max-w-2xl rounded-2xl border border-white/20 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div class="px-6 py-4 bg-slate-900 border-b border-white/10 flex items-center justify-between">
+                <h3 class="text-base font-extrabold text-white m-0" id="formCreatorTitle">Tambah Kebutuhan Pembelian</h3>
+                <button type="button" onclick="BudgetCreatorModule.closeForm()" class="text-slate-400 hover:text-white text-xl leading-none">&times;</button>
+            </div>
+            <form onsubmit="BudgetCreatorModule.saveForm(event)" class="p-6 overflow-y-auto space-y-4">
+                <input type="hidden" id="formCreatorId">
+                <datalist id="creatorAccountReferenceOptions"></datalist>
+                <datalist id="creatorProjectReferenceOptions"></datalist>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs font-bold text-slate-300 mb-1">Departemen</label>
+                        <select id="formCreatorDept" required class="form-select w-full"></select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-300 mb-1">Nama Akun</label>
+                        <input type="text" id="formCreatorAccount" list="creatorAccountReferenceOptions" class="form-input w-full" placeholder="Pilih atau ketik akun">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-300 mb-1">Nama Proyek UP</label>
+                        <input type="text" id="formCreatorProject" list="creatorProjectReferenceOptions" class="form-input w-full" placeholder="Pilih atau ketik proyek">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-300 mb-1">Nama Kebutuhan / Barang</label>
+                        <input type="text" id="formCreatorItem" required class="form-input w-full" placeholder="Contoh: Laptop Operasional">
+                    </div>
+                    <div class="sm:col-span-2">
+                        <label class="block text-xs font-bold text-slate-300 mb-1">Spesifikasi / Alasan Pengadaan</label>
+                        <textarea id="formCreatorSpec" rows="2" class="form-textarea w-full" placeholder="Rincian spesifikasi, tipe, ukuran, atau keperluan pengadaan"></textarea>
+                    </div>
+                    <div class="sm:col-span-2">
+                        <label class="block text-xs font-bold text-slate-300 mb-1">Catatan Analisa</label>
+                        <textarea id="formCreatorNote" rows="3" class="form-textarea w-full" placeholder="Catatan rekomendasi, asumsi, dan sumber. Dapat diedit."></textarea>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-300 mb-1">Jumlah (Qty)</label>
+                        <input type="number" id="formCreatorQty" min="0.01" step="any" value="1" required class="form-input w-full">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-300 mb-1">Satuan</label>
+                        <input type="text" id="formCreatorUnit" value="unit" required class="form-input w-full">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-300 mb-1">Estimasi Harga Satuan (Rp)</label>
+                        <input type="number" id="formCreatorPrice" min="0" step="1000" value="0" required class="form-input w-full">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-300 mb-1">Prioritas</label>
+                        <select id="formCreatorPriority" class="form-select w-full">
+                            <option>Normal</option>
+                            <option>Tinggi</option>
+                            <option>Rendah</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-300 mb-1">Tanggal Dibutuhkan</label>
+                        <input type="date" id="formCreatorDate" class="form-input w-full">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-300 mb-1">Status</label>
+                        <select id="formCreatorStatus" class="form-select w-full">
+                            <option>Draft</option>
+                            <option>Diajukan</option>
+                            <option>Disetujui</option>
+                            <option>Ditolak</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="pt-4 border-t border-white/10 flex justify-end gap-2.5">
+                    <button type="button" onclick="BudgetCreatorModule.closeForm()" class="btn btn-secondary">Batal</button>
+                    <button type="submit" class="btn btn-primary">Simpan Kebutuhan</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="js/config.js?v=20261105-goa"></script>
+    <script src="js/utils/formatters.js?v=upload-safety-1"></script>
+    <script src="js/core.js?v=20261105-goa"></script>
+    <script src="js/modules/upload.js?v=20261104-budget-ytd-range-fix"></script>
+    <script src="js/layout.js?v=20261102-upload-preview-wide"></script>
+    <script src="js/modules/ai-settings.js"></script>
+    <script src="js/modules/budget-creator.js?v=20261102-budget-creator-group-delete"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', async () => {
+            await window.SmartBaraCore.init();
+            await window.SmartBaraLayout.init('budget-creator');
+            await window.BudgetCreatorModule.init();
+        });
+    </script>
+</body>
+</html>
+

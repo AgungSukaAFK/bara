@@ -1,0 +1,151 @@
+﻿<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Budget Plan Akun - Smart BARA 7.10 HZ</title>
+    <link rel="stylesheet" href="css/app.css?v=20261102-smooth-loading">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body class="bg-[#090d16] text-slate-100 flex h-screen overflow-hidden">
+
+    <!-- Sidebar Navigation -->
+    <aside id="appSidebar" class="w-64 glass-panel border-r border-white/10 flex flex-col z-40 fixed inset-y-0 left-0 transition-transform duration-200 lg:static lg:translate-x-0 -translate-x-full">
+    </aside>
+
+    <!-- Main Content Area -->
+    <div class="flex-1 flex flex-col min-w-0 overflow-hidden">
+        <header id="appHeader" class="glass-panel border-b border-white/10 px-6 py-3.5 flex items-center justify-between z-20">
+        </header>
+
+        <main class="flex-1 overflow-y-auto p-6 space-y-6">
+            <!-- Header Banner -->
+            <div class="glass-panel rounded-2xl p-6 border border-white/10 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-gradient-to-r from-slate-900 via-slate-900/90 to-teal-950/40 shadow-xl">
+                <div>
+                    <span class="badge badge-emerald mb-2">Plafon Anggaran 12 Bulan</span>
+                    <h2 class="text-2xl font-black text-white m-0 tracking-tight">Budget Plan Akun Induk</h2>
+                    <p class="text-xs text-slate-400 mt-1 m-0">Matriks alokasi plafon anggaran per akun dari Januari hingga Desember.</p>
+                </div>
+                <div class="flex items-center gap-2">
+                    <select id="budgetCopySourcePeriod" class="form-select text-xs" aria-label="Periode sumber budget"></select>
+                    <button type="button" onclick="BudgetModule.copyFromPeriod()" class="btn btn-secondary text-xs">Tarik Budget Periode</button>
+                    <button type="button" onclick="BudgetModule.openForm()" class="btn btn-primary">+ Tambah Anggaran Akun</button>
+                    <button type="button" onclick="BudgetModule.deleteAll()" class="btn btn-danger text-xs">Hapus Semua Budget</button>
+                </div>
+            </div>
+
+            <!-- Stats -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div class="glass-card rounded-xl p-4 border border-white/10">
+                    <p class="text-[11px] font-bold text-slate-400 uppercase tracking-wider m-0">Total Akun Terdaftar</p>
+                    <p class="text-2xl font-black text-white mt-1 mb-0 stat-value" id="budgetStatCount">0</p>
+                </div>
+                <div class="glass-card rounded-xl p-4 border border-white/10">
+                    <p class="text-[11px] font-bold text-slate-400 uppercase tracking-wider m-0">Total Plafon Setahun (12 Bulan)</p>
+                    <p class="text-2xl font-black text-emerald-400 mt-1 mb-0 stat-value" id="budgetStatTotal">Rp 0</p>
+                </div>
+            </div>
+
+            <!-- Table Container -->
+            <div class="glass-panel rounded-xl border border-white/10 overflow-hidden shadow-2xl">
+                <div class="p-4 border-b border-white/10 flex flex-wrap items-center justify-between gap-3">
+                    <input type="search" id="budgetSearch" oninput="BudgetModule.renderTable()" placeholder="Cari nama akun atau departemen..." class="form-input flex-1 min-w-[200px]">
+                    <span id="budgetStatusText" class="text-xs text-slate-400 font-semibold ml-auto"></span>
+                </div>
+                <div class="overflow-x-auto max-h-[60vh]">
+                    <table class="app-table">
+                        <thead>
+                            <tr>
+                                <th>Nama Akun</th>
+                                <th>Dept</th>
+                                <th class="text-right">Jan</th>
+                                <th class="text-right">Feb</th>
+                                <th class="text-right">Mar</th>
+                                <th class="text-right">Apr</th>
+                                <th class="text-right">Mei</th>
+                                <th class="text-right">Jun</th>
+                                <th class="text-right">Jul</th>
+                                <th class="text-right">Agu</th>
+                                <th class="text-right">Sep</th>
+                                <th class="text-right">Okt</th>
+                                <th class="text-right">Nov</th>
+                                <th class="text-right">Des</th>
+                                <th class="text-right">Total Setahun</th>
+                                <th class="text-right">Aksi</th>
+                            </tr>
+                        </thead>
+                        <tbody id="budgetTableBody" class="divide-y divide-white/5">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Modal Form (Tambah / Edit Budget Akun) -->
+    <div id="budgetFormModal" class="modal-overlay fixed inset-0 z-50 flex items-center justify-center p-4 hidden opacity-0 transition-all duration-200" onclick="if(event.target===this) BudgetModule.closeForm()">
+        <div class="glass-panel w-full max-w-3xl rounded-2xl border border-white/20 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div class="px-6 py-4 bg-slate-900 border-b border-white/10 flex items-center justify-between">
+                <h3 class="text-base font-extrabold text-white m-0" id="formBudgetTitle">Pengaturan Anggaran Akun</h3>
+                <button type="button" onclick="BudgetModule.closeForm()" class="text-slate-400 hover:text-white text-xl leading-none">&times;</button>
+            </div>
+            <form onsubmit="BudgetModule.saveForm(event)" class="p-6 overflow-y-auto space-y-4">
+                <input type="hidden" id="formBudgetId">
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs font-bold text-slate-300 mb-1">Nama Akun</label>
+                        <input type="text" id="formBudgetName" required class="form-input w-full" placeholder="Contoh: Operasional HR">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-300 mb-1">Departemen</label>
+                        <select id="formBudgetDept" class="form-select w-full">
+                            <option>HR</option><option>GA</option><option>IT</option><option>FINANCE</option>
+                            <option>LOGISTIK</option><option>OPERASIONAL</option><option>PRODUKSI</option><option>SHE</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="pt-2">
+                    <p class="text-xs font-bold text-teal-300 uppercase tracking-wider mb-2">Alokasi Plafon Anggaran 12 Bulan (Rp)</p>
+                    <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                        <div><label class="text-[10px] text-slate-400 block mb-0.5">Januari</label><input type="number" id="formBudgetMonth1" class="form-input w-full text-right py-1"></div>
+                        <div><label class="text-[10px] text-slate-400 block mb-0.5">Februari</label><input type="number" id="formBudgetMonth2" class="form-input w-full text-right py-1"></div>
+                        <div><label class="text-[10px] text-slate-400 block mb-0.5">Maret</label><input type="number" id="formBudgetMonth3" class="form-input w-full text-right py-1"></div>
+                        <div><label class="text-[10px] text-slate-400 block mb-0.5">April</label><input type="number" id="formBudgetMonth4" class="form-input w-full text-right py-1"></div>
+                        <div><label class="text-[10px] text-slate-400 block mb-0.5">Mei</label><input type="number" id="formBudgetMonth5" class="form-input w-full text-right py-1"></div>
+                        <div><label class="text-[10px] text-slate-400 block mb-0.5">Juni</label><input type="number" id="formBudgetMonth6" class="form-input w-full text-right py-1"></div>
+                        <div><label class="text-[10px] text-slate-400 block mb-0.5">Juli</label><input type="number" id="formBudgetMonth7" class="form-input w-full text-right py-1"></div>
+                        <div><label class="text-[10px] text-slate-400 block mb-0.5">Agustus</label><input type="number" id="formBudgetMonth8" class="form-input w-full text-right py-1"></div>
+                        <div><label class="text-[10px] text-slate-400 block mb-0.5">September</label><input type="number" id="formBudgetMonth9" class="form-input w-full text-right py-1"></div>
+                        <div><label class="text-[10px] text-slate-400 block mb-0.5">Oktober</label><input type="number" id="formBudgetMonth10" class="form-input w-full text-right py-1"></div>
+                        <div><label class="text-[10px] text-slate-400 block mb-0.5">November</label><input type="number" id="formBudgetMonth11" class="form-input w-full text-right py-1"></div>
+                        <div><label class="text-[10px] text-slate-400 block mb-0.5">Desember</label><input type="number" id="formBudgetMonth12" class="form-input w-full text-right py-1"></div>
+                    </div>
+                </div>
+
+                <div class="pt-4 border-t border-white/10 flex justify-end gap-2.5">
+                    <button type="button" onclick="BudgetModule.closeForm()" class="btn btn-secondary">Batal</button>
+                    <button type="submit" class="btn btn-primary">Simpan Anggaran</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="js/config.js?v=20261105-goa"></script>
+    <script src="js/utils/formatters.js?v=upload-safety-1"></script>
+    <script src="js/core.js?v=20261105-goa"></script>
+    <script src="js/modules/upload.js?v=20261104-budget-ytd-range-fix"></script>
+    <script src="js/layout.js?v=20261102-upload-preview-wide"></script>
+    <script src="js/modules/budget.js?v=20261102-department-filter"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', async () => {
+            await window.SmartBaraCore.init();
+            await window.SmartBaraLayout.init('budget-plan');
+            await window.BudgetModule.init('account');
+        });
+    </script>
+</body>
+</html>
+
