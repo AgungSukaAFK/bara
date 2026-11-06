@@ -101,3 +101,17 @@ Aplikasi ini dibangun murni menggunakan standard web modern (Vanilla JS, CSS Tok
 - **VS Code Live Server**: Klik kanan pada `Smart BARA 7.10 HZ/index.html` ➔ pilih `Open with Live Server`.
 - **Browser Langsung**: Dobel klik `index.html` pada File Explorer.
 - **Hosting / Deploy**: Langsung siap diunggah ke Vercel, Netlify, atau web hosting static manapun tanpa perlu build step `npm run build`.
+## Tema Tampilan
+
+Pengguna memilih tema lewat tombol **Pengaturan tampilan** di header. Pilihan disimpan per browser.
+
+| Tema | Mode | Keterangan |
+| --- | --- | --- |
+| HZ (default) | Selalu gelap | Tampilan khas Smart BARA |
+| Normal | Terang, Gelap, Sistem | Tampilan bersih dan profesional |
+
+- `js/theme.js`: daftar tema, preferensi, dan pemetaan warna Tailwind ke CSS variable. Harus dimuat tepat setelah script Tailwind CDN.
+- `css/themes.css`: pemilih tema dan styling tema Normal. Tema HZ tetap memakai `css/app.css`.
+- Class warna Tailwind dipakai seperti biasa. Tema Normal memetakannya otomatis, termasuk untuk mode terang.
+- Area dengan class `sb-palette-fixed` dan deck presentasi selalu memakai palet asli.
+- Canvas Chart.js mengambil warna dari `SmartBaraTheme.getChartColors()`.

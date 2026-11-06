@@ -41,6 +41,9 @@ window.MonthlyModule = (function() {
             loadData();
         });
         window.addEventListener('smartbara:dept_filter_change', () => loadData());
+        window.SmartBaraTheme.onChange(() => {
+            if (monthlyChart) renderChart();
+        });
         SmartBaraCore.onRealtimeChange(payload => {
             if (['smartbara_store', 'smartbara_budget', 'smartbara_budget_site'].includes(payload.table)) loadData();
         });
@@ -389,6 +392,7 @@ window.MonthlyModule = (function() {
 
         const ctx = canvas.getContext('2d');
         if (monthlyChart) monthlyChart.destroy();
+        const chartColors = window.SmartBaraTheme.getChartColors();
 
         monthlyChart = new Chart(ctx, {
             type: 'bar',
@@ -441,7 +445,7 @@ window.MonthlyModule = (function() {
                 },
                 plugins: {
                     legend: {
-                        labels: { color: '#94A3B8', font: { family: 'Plus Jakarta Sans', weight: 'bold' } }
+                        labels: { color: chartColors.text, font: { family: chartColors.font, weight: 'bold' } }
                     },
                     tooltip: {
                         callbacks: {
@@ -451,13 +455,13 @@ window.MonthlyModule = (function() {
                 },
                 scales: {
                     x: {
-                        grid: { color: 'rgba(255, 255, 255, 0.05)' },
-                        ticks: { color: '#94A3B8' }
+                        grid: { color: chartColors.grid },
+                        ticks: { color: chartColors.text }
                     },
                     y: {
-                        grid: { color: 'rgba(255, 255, 255, 0.05)' },
+                        grid: { color: chartColors.grid },
                         ticks: {
-                            color: '#94A3B8',
+                            color: chartColors.text,
                             callback: (v) => SmartBaraFormatters.formatRupiah(v)
                         }
                     }

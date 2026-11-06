@@ -6,12 +6,14 @@
     <meta name="theme-color" content="#101a1e">
     <title>Masuk - Smart BARA</title>
     <link rel="stylesheet" href="css/app.css?v=20261102-smooth-loading">
+    <link rel="stylesheet" href="css/themes.css?v=20261106-themes">
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="js/theme.js?v=20261106-themes"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body class="min-h-screen overflow-auto bg-[#101a1e] text-slate-100">
     <main class="min-h-screen grid lg:grid-cols-[1.05fr_.95fr]">
-        <section class="relative flex min-h-[38vh] flex-col justify-between overflow-hidden bg-[#123b36] p-8 sm:p-12 lg:min-h-screen">
+        <section class="login-hero sb-palette-fixed relative flex min-h-[38vh] flex-col justify-between overflow-hidden bg-[#123b36] p-8 sm:p-12 lg:min-h-screen">
             <img src="https://images.unsplash.com/photo-1504307651254-35680f356dfd?auto=format&fit=crop&w=1600&q=85" alt="" class="absolute inset-0 h-full w-full object-cover opacity-45" fetchpriority="high">
             <div class="absolute inset-0 bg-gradient-to-b from-[#0d2926]/75 via-[#123b36]/65 to-[#123b36]/90"></div>
             <div class="absolute inset-0 opacity-25" style="background-image:linear-gradient(135deg,transparent 35%,rgba(255,255,255,.09) 35.2%,transparent 35.5%),linear-gradient(45deg,transparent 62%,rgba(255,255,255,.08) 62.2%,transparent 62.5%);background-size:54px 54px"></div>
@@ -30,7 +32,7 @@
             </div>
         </section>
 
-        <section class="flex items-center justify-center bg-[#f4f3ed] px-5 py-10 text-slate-900 sm:px-10">
+        <section class="login-pane sb-palette-fixed flex items-center justify-center bg-[#f4f3ed] px-5 py-10 text-slate-900 sm:px-10">
             <div class="w-full max-w-md">
                 <a href="index.html" class="mb-8 inline-flex text-xs font-bold text-slate-500 hover:text-teal-800">← Kembali ke aplikasi</a>
                 <p class="mb-2 text-xs font-black uppercase text-teal-800">Akses akun</p>

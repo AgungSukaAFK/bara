@@ -549,3 +549,44 @@ input,select,textarea{font-family:inherit}
   .sidebar.open{transform:translateX(0)}
   .sidebar-trigger{display:none}
 }
+
+/* Tema Normal Smart BARA: tampilan polos, tanpa gradasi dan efek cahaya. */
+html[data-sb-theme="normal"]{
+  --font:'Inter',system-ui,sans-serif;
+  --accent:#0f766e;
+  --accent-2:#0f766e;
+  --accent-grad:linear-gradient(#0f766e,#0f766e);
+  --radius:10px;
+  --radius-sm:8px;
+  --radius-xs:6px;
+}
+html[data-sb-theme="normal"][data-theme="dark"]{
+  --bg:#101318;
+  --bg-2:#191d24;
+  --surface:#191d24;
+  --surface-2:#232831;
+  --text:#eceff3;
+  --text-2:#d4d9e1;
+  --muted:#a0aab7;
+  --muted-2:#8993a2;
+  --accent-2:#2dd4bf;
+  --shadow:0 1px 2px rgba(0,0,0,.3);
+}
+html[data-sb-theme="normal"][data-theme="light"]{
+  --bg:#f5f6f8;
+  --surface:#ffffff;
+  --surface-2:#f1f3f6;
+  --shadow:0 1px 2px rgba(15,23,42,.05);
+}
+html[data-sb-theme="normal"] .bg-orbs{display:none}
+html[data-sb-theme="normal"] .sidebar,
+html[data-sb-theme="normal"] .topbar{backdrop-filter:none;-webkit-backdrop-filter:none}
+html[data-sb-theme="normal"] .brand-icon{width:40px;height:40px;flex-basis:40px;border:0;border-radius:8px;background:#0f766e;box-shadow:none;filter:none}
+html[data-sb-theme="normal"] .brand-icon::after{content:none}
+html[data-sb-theme="normal"] .brand-icon .hz-mark{color:#fff;font-family:var(--font);font-size:1rem;font-weight:700;letter-spacing:.02em;text-shadow:none}
+html[data-sb-theme="normal"] .nav-item.active{color:#fff;font-weight:600;box-shadow:none}
+html[data-sb-theme="normal"] .btn-primary{color:#fff;font-weight:600;box-shadow:none}
+html[data-sb-theme="normal"] .brand-icon .hz-mark{-webkit-text-fill-color:#fff}
+html[data-sb-theme="normal"] .nav-back{background:transparent;border:1px solid var(--border-strong);color:var(--text-2);font-weight:500;box-shadow:none}
+html[data-sb-theme="normal"] .nav-back:hover{background:var(--surface-2);color:var(--text)}
+html[data-sb-theme="normal"][data-theme="light"] .storage-badge.online{color:#047857}

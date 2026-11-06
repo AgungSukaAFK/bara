@@ -1266,7 +1266,8 @@ function toggleTheme() {
   const root = document.documentElement;
   const next = root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
   root.setAttribute('data-theme', next);
-  localStorage.setItem('theme', next);
+  if (window.SmartBaraTheme?.isNormal()) window.SmartBaraTheme.setMode(next);
+  else localStorage.setItem('theme', next);
   const icon = document.querySelector('#themeToggle i');
   if (icon) icon.setAttribute('data-lucide', next === 'dark' ? 'moon' : 'sun');
   if (typeof lucide !== 'undefined' && lucide.createIcons) lucide.createIcons();
@@ -2452,7 +2453,9 @@ async function init() {
     loadLocationMap();
     loadUploadHistory();
     loadCodeFormats();
-    const t = localStorage.getItem('theme') || 'dark';
+    const t = window.SmartBaraTheme?.isNormal()
+      ? window.SmartBaraTheme.getResolvedMode()
+      : (localStorage.getItem('theme') || 'dark');
     document.documentElement.setAttribute('data-theme', t);
     const icon = t === 'dark' ? 'moon' : 'sun';
     const ti = $('#themeToggle')?.querySelector('i');

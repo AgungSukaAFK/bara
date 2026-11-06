@@ -9,6 +9,34 @@ window.SmartBaraLayout = (function() {
     const loadingTasks = new Map();
     let loadingShowTimer = null;
     let loadingProgressTimer = null;
+    // Ikon garis untuk tema Normal (tema HZ memakai emoji).
+    const LINE_ICONS = {
+        dashboard: '<rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/>',
+        rekonsil: '<path d="M12 3v18"/><path d="M7 21h10"/><path d="M4 7h16"/><path d="m4 7-2.5 7a3.5 3.5 0 0 0 5 0Z"/><path d="m20 7-2.5 7a3.5 3.5 0 0 0 5 0Z"/>',
+        'pov-akun': '<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9Z"/><path d="M14 3v6h6"/><path d="M8 13h8"/><path d="M8 17h6"/>',
+        'pov-proyek': '<path d="M3 21h18"/><path d="M6 21V8l6-4 6 4v13"/><path d="M10 21v-5h4v5"/><path d="M10 11h4"/>',
+        'matriks-dept': '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M3 15h18"/><path d="M9 3v18"/><path d="M15 3v18"/>',
+        'budget-plan': '<path d="M20 7H5a2 2 0 0 1 0-4h13v4"/><path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1V8a1 1 0 0 0-1-1"/><path d="M17 14h.01"/>',
+        'account-alignment': '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
+        'budget-analysis': '<path d="M3 17 9 11l4 4 8-8"/><path d="M15 7h6v6"/>',
+        'budget-creator': '<circle cx="9" cy="20" r="1"/><circle cx="18" cy="20" r="1"/><path d="M2 3h3l2.6 12.4a2 2 0 0 0 2 1.6h8.8a2 2 0 0 0 2-1.6L22 7H6"/>',
+        'budget-future': '<path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M8 15v2"/><path d="M13 10v7"/><path d="M18 6v11"/>',
+        asset: '<path d="M21 8 12 3 3 8v8l9 5 9-5Z"/><path d="m3 8 9 5 9-5"/><path d="M12 13v8"/>',
+        monthly: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18"/><path d="M8 3v4"/><path d="M16 3v4"/>',
+        'user-guide': '<path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3Z"/>',
+        users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.9"/><path d="M16 3.1a4 4 0 0 1 0 7.8"/>',
+        'ai-settings': '<path d="M4 6h10"/><path d="M18 6h2"/><circle cx="16" cy="6" r="2"/><path d="M4 12h2"/><path d="M10 12h10"/><circle cx="8" cy="12" r="2"/><path d="M4 18h8"/><path d="M16 18h4"/><circle cx="14" cy="18" r="2"/>',
+        upload: '<path d="M12 15V3"/><path d="m7 8 5-5 5 5"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>',
+        refresh: '<path d="M21 12a9 9 0 0 1-15.5 6.2L3 16"/><path d="M3 12A9 9 0 0 1 18.5 5.8L21 8"/><path d="M21 3v5h-5"/><path d="M3 21v-5h5"/>',
+        building: '<rect x="5" y="3" width="14" height="18" rx="1"/><path d="M9 7h1"/><path d="M14 7h1"/><path d="M9 11h1"/><path d="M14 11h1"/><path d="M10 21v-5h4v5"/>',
+        key: '<circle cx="8" cy="15" r="5"/><path d="m12 11 8-8"/><path d="m17 6 3 3"/>',
+        theme: '<circle cx="12" cy="12" r="9"/><path d="M12 3v18"/><path d="M12 8h6.5"/><path d="M12 12h9"/><path d="M12 16h6.5"/>'
+    };
+
+    function themedIcon(emoji, lineIconId) {
+        return `<span class="sb-icon-emoji">${emoji}</span><span class="sb-icon-line" aria-hidden="true"><svg viewBox="0 0 24 24">${LINE_ICONS[lineIconId]}</svg></span>`;
+    }
+
     const MENU_ITEMS = [
         { id: 'dashboard', label: 'Dashboard Utama', href: 'index.html', icon: '📊' },
         { id: 'rekonsil', label: 'Rekonsil Anggaran', href: 'rekonsil.html', icon: '⚖️' },
@@ -52,6 +80,7 @@ window.SmartBaraLayout = (function() {
             renderPeriodModal();
             renderDeptFilterModal();
             bindEvents();
+            bindThemeControl();
             updateDeptFilterLabel();
             updateLoading(layoutTask, '', '', 92);
             layoutSucceeded = true;
@@ -367,7 +396,7 @@ window.SmartBaraLayout = (function() {
             const isActive = item.id === activePageId;
             return `
                 <a href="${item.href}" title="${item.label}" class="nav-link ${isActive ? 'active' : ''} ${item.highlight ? 'border border-teal-500/30' : ''}">
-                    <span class="nav-icon text-base">${item.icon}</span>
+                    <span class="nav-icon text-base">${themedIcon(item.icon, item.id)}</span>
                     <span class="nav-label">${item.label}</span>
                 </a>
             `;
@@ -394,7 +423,7 @@ window.SmartBaraLayout = (function() {
                 <!-- Upload Button -->
                 <button type="button" onclick="SmartBaraLayout.openUploadModal()" 
                     class="sidebar-upload w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 border border-blue-500/30 transition text-xs font-bold" title="Upload Excel Multi Dept">
-                    <span class="sidebar-upload-icon">📤</span><span class="sidebar-upload-label">Upload Excel Multi Dept</span>
+                    <span class="sidebar-upload-icon">${themedIcon('📤', 'upload')}</span><span class="sidebar-upload-label">Upload Excel Multi Dept</span>
                 </button>
                 <!-- User Profile Card -->
                 <div id="userProfileCard" title="Profil pengguna" class="flex items-center justify-between p-2 rounded-lg bg-white/5 hover:bg-white/10 transition cursor-pointer" onclick="SmartBaraLayout.toggleAuthModal()">
@@ -408,7 +437,7 @@ window.SmartBaraLayout = (function() {
                             <p class="text-[10px] text-teal-300 truncate m-0" id="userRoleText">Level akses: Baca Saja</p>
                         </div>
                     </div>
-                    <span class="text-xs text-slate-400">🔑</span>
+                    <span class="text-xs text-slate-400">${themedIcon('🔑', 'key')}</span>
                 </div>
             </div>
         `;
@@ -453,7 +482,7 @@ window.SmartBaraLayout = (function() {
                 <!-- Dept Filter Button -->
                 <button type="button" onclick="SmartBaraLayout.openDeptFilter()" id="deptFilterBtn"
                     class="hidden lg:flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-xs font-bold text-slate-300 hover:text-white hover:border-teal-500/60 transition" title="Filter & Gabungan Departemen">
-                    <span>🏢</span>
+                    <span>${themedIcon('🏢', 'building')}</span>
                     <span id="deptFilterLabel">Semua Dept</span>
                     <span class="text-slate-500">▾</span>
                 </button>
@@ -471,14 +500,104 @@ window.SmartBaraLayout = (function() {
                 <!-- Upload shortcut -->
                 <button type="button" onclick="SmartBaraLayout.openUploadModal()" title="Upload Laporan Excel"
                     class="p-2 rounded-lg bg-blue-600/80 hover:bg-blue-600 text-white text-xs font-bold transition flex items-center gap-1">
-                    📤
+                    ${themedIcon('📤', 'upload')}
                 </button>
 
                 <button type="button" onclick="window.location.reload()" title="Muat Ulang Data" class="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-bold transition">
-                    🔄
+                    ${themedIcon('🔄', 'refresh')}
                 </button>
+
+                ${renderThemeControl()}
             </div>
         `;
+        syncThemeControl();
+    }
+
+    // ============= PEMILIH TEMA =============
+    function renderThemeControl() {
+        const theme = window.SmartBaraTheme;
+        if (!theme) return '';
+        const themeOptions = theme.THEMES.map(item => `
+            <label class="sb-theme-option">
+                <input type="radio" name="sbThemeChoice" value="${item.id}">
+                <span class="sb-theme-card">
+                    <span class="sb-theme-preview sb-theme-preview-${item.id}" aria-hidden="true"><i></i><i></i></span>
+                    <span class="sb-theme-name">${item.label}</span>
+                    <span class="sb-theme-desc">${item.description}</span>
+                </span>
+            </label>
+        `).join('');
+        const modeOptions = theme.MODES.map(item => `
+            <label class="sb-mode-option">
+                <input type="radio" name="sbModeChoice" value="${item.id}">
+                <span>${item.label}</span>
+            </label>
+        `).join('');
+        return `
+            <div class="sb-theme-control" id="themeControl">
+                <button type="button" id="themeMenuButton" title="Pengaturan tampilan" aria-label="Pengaturan tampilan" aria-haspopup="dialog" aria-expanded="false" aria-controls="themeMenu"
+                    class="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-bold transition">
+                    ${themedIcon('🎨', 'theme')}
+                </button>
+                <div id="themeMenu" class="sb-theme-popover" role="dialog" aria-label="Pengaturan tampilan" hidden>
+                    <fieldset>
+                        <legend class="sb-theme-legend">Tema</legend>
+                        <div class="sb-theme-options">${themeOptions}</div>
+                    </fieldset>
+                    <fieldset id="themeModeFieldset">
+                        <legend class="sb-theme-legend">Mode</legend>
+                        <div class="sb-mode-options">${modeOptions}</div>
+                        <p id="themeModeHint" class="sb-theme-hint" hidden>Tema HZ selalu gelap. Pilih tema Normal untuk memakai mode terang.</p>
+                    </fieldset>
+                </div>
+            </div>
+        `;
+    }
+
+    function syncThemeControl() {
+        const theme = window.SmartBaraTheme;
+        const control = document.getElementById('themeControl');
+        if (!theme || !control) return;
+        const supportsMode = theme.THEMES.find(item => item.id === theme.getTheme())?.supportsMode;
+        const checkOption = (name, value) => {
+            const input = control.querySelector(`input[name="${name}"][value="${value}"]`);
+            if (input) input.checked = true;
+        };
+        checkOption('sbThemeChoice', theme.getTheme());
+        checkOption('sbModeChoice', theme.getMode());
+        document.getElementById('themeModeFieldset').disabled = !supportsMode;
+        document.getElementById('themeModeHint').hidden = Boolean(supportsMode);
+    }
+
+    function setThemeMenuOpen(isOpen) {
+        const menu = document.getElementById('themeMenu');
+        const button = document.getElementById('themeMenuButton');
+        if (!menu || !button) return;
+        menu.hidden = !isOpen;
+        button.setAttribute('aria-expanded', String(isOpen));
+    }
+
+    function bindThemeControl() {
+        if (!window.SmartBaraTheme) return;
+        // Header dirender ulang saat periode berganti, jadi event dipasang di document.
+        document.addEventListener('click', event => {
+            if (event.target.closest('#themeMenuButton')) {
+                setThemeMenuOpen(document.getElementById('themeMenu').hidden);
+            } else if (!event.target.closest('#themeMenu')) {
+                setThemeMenuOpen(false);
+            }
+        });
+        document.addEventListener('change', event => {
+            if (event.target.name === 'sbThemeChoice') window.SmartBaraTheme.setTheme(event.target.value);
+            if (event.target.name === 'sbModeChoice') window.SmartBaraTheme.setMode(event.target.value);
+        });
+        document.addEventListener('keydown', event => {
+            const menu = document.getElementById('themeMenu');
+            if (event.key !== 'Escape' || !menu || menu.hidden) return;
+            setThemeMenuOpen(false);
+            document.getElementById('themeMenuButton')?.focus();
+        });
+        window.SmartBaraTheme.onChange(syncThemeControl);
     }
 
     // ============= AUTH MODAL =============

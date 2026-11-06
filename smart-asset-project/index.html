@@ -8,6 +8,17 @@
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+<script src="/js/theme.js?v=20261106-themes"></script>
+<script>
+  // Tema Normal Smart BARA menentukan mode terang/gelap halaman ini.
+  (function() {
+    const syncAssetMode = () => {
+      if (SmartBaraTheme.isNormal()) document.documentElement.setAttribute('data-theme', SmartBaraTheme.getResolvedMode());
+    };
+    syncAssetMode();
+    SmartBaraTheme.onChange(syncAssetMode);
+  })();
+</script>
 <script src="/js/config.js"></script>
 <link rel="stylesheet" href="styles.css" />
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
