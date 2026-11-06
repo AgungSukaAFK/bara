@@ -2603,7 +2603,9 @@ window.DashboardModule = (function() {
         } catch(e) {}
 
         const selectedDepts = new Set(window.SmartBaraCore.getSelectedDepartments().map(dept => String(dept).toUpperCase()));
-        const matchesDept = dept => selectedDepts.size === 0 || selectedDepts.has(String(dept || '').toUpperCase());
+        // Mode Gabungan tidak menyaring: budget dept yang belum punya transaksi tetap dihitung.
+        const isCombinedScope = window.SmartBaraCore.isCombinedDepartments();
+        const matchesDept = dept => isCombinedScope || selectedDepts.size === 0 || selectedDepts.has(String(dept || '').toUpperCase());
         budgetData = budgetData.filter(item => matchesDept(item.dept));
         creatorData = creatorData.filter(item => matchesDept(item.department));
         futureBudgetData = futureBudgetData.filter(item => matchesDept(item.dept || item.department));

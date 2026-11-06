@@ -873,13 +873,9 @@ window.SmartBaraCore = (function() {
             }
         } else if (!Array.isArray(selectedDepartments) || !selectedDepartments.length) {
             selectedDepartments = ['ALL'];
-        } else if (selectedDepartments.includes('ALL')) {
-            const departmentNames = Object.keys(databaseDept).map(dept => String(dept).toUpperCase());
-            const hasAllDepartments = departmentNames.length > 0 && departmentNames.every(dept => selectedDepartments.map(item => String(item).toUpperCase()).includes(dept));
-            if (!hasAllDepartments) {
-                selectedDepartments = departmentNames.length ? departmentNames : ['ALL'];
-            }
-        } else {
+        } else if (!selectedDepartments.includes('ALL')) {
+            // 'ALL' tetap disimpan apa adanya: mengubahnya jadi daftar dept dari cache
+            // membuat dept baru dari cloud tidak ikut terpilih di mode Gabungan.
             const valid = selectedDepartments.filter(dept => Object.keys(databaseDept).includes(String(dept)) || Object.keys(databaseDept).map(item => String(item).toUpperCase()).includes(String(dept).toUpperCase()));
             selectedDepartments = valid.length ? valid : ['ALL'];
         }
@@ -1015,7 +1011,8 @@ window.SmartBaraCore = (function() {
         if (!Array.isArray(selectedDepartments) || !selectedDepartments.length) return true;
         if (selectedDepartments.includes('ALL')) return true;
         if (allDepts.length === 0) return false;
-        return selectedDepartments.length > 0 && selectedDepartments.length === allDepts.length;
+        const selected = new Set(selectedDepartments.map(dept => String(dept).toUpperCase()));
+        return allDepts.every(dept => selected.has(String(dept).toUpperCase()));
     }
 
     function setSelectedDepartments(deptArray) {
