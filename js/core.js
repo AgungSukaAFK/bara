@@ -1088,8 +1088,6 @@ window.SmartBaraCore = (function() {
             error.retryable = true;
             throw error;
         }
-        // Hapus data lama periode+dept ini terlebih dahulu (hindari onConflict constraint)
-        await supabaseClient.from('smartbara_store').delete().eq('period_name', periodName).eq('dept_name', normalizedDept);
         const payload = {
             period_name: periodName,
             dept_name: normalizedDept,
@@ -1098,7 +1096,7 @@ window.SmartBaraCore = (function() {
         };
         const { data, error } = await supabaseClient
             .from('smartbara_store')
-            .insert(payload)
+            .upsert(payload, { onConflict: 'period_name,dept_name' })
             .select('*')
             .maybeSingle();
         if (error) throw error;
@@ -1826,6 +1824,7 @@ window.SmartBaraCore = (function() {
         saveDepartmentStore,
         syncVersionedRow,
         syncCloudUpsert,
+        rewritePeriodInValue,
         deleteVersionedRow,
         onRealtimeChange,
         getSyncHistory,

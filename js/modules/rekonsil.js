@@ -353,6 +353,49 @@ window.RekonsilModule = (function() {
         }
     }
 
+    // Mengirim cache budget ke cloud tanpa menghapus apa pun: baris yang hanya ada di cloud
+    // (mis. ditambahkan pengguna lain) tetap utuh, dan kegagalan tidak mengosongkan periode.
+    async function syncBudgetCacheToCloud(client, tableName, cacheKey, period, label) {
+        const nameColumn = tableName === 'smartbara_budget_site' ? 'nama_proyek_up' : 'nama_akun';
+        const months = ['jan', 'feb', 'mar', 'apr', 'mei', 'jun', 'jul', 'agu', 'sep', 'okt', 'nov', 'des'];
+        const identityOf = (name, dept) => `${String(dept || '').trim().toUpperCase()}:${String(name || '').trim().toLocaleLowerCase('id-ID')}`;
+
+        // Cache ditulis beberapa modul, ada yang memakai nama/dept dan ada yang memakai kolom cloud.
+        const cachedRows = readBudgetOptionCache(cacheKey).map(row => ({
+            id: String(row.id || ''),
+            nama: String(row[nameColumn] || row.nama || row.nama_proyek || '').trim(),
+            dept: String(row.departemen || row.dept || 'UMUM').trim(),
+            budget: Array.isArray(row.budget) ? row.budget : months.map(month => Number(row[`budget_${month}`]) || 0)
+        })).filter(row => row.nama);
+        if (!cachedRows.length) return 0;
+
+        const { data, error } = await client.from(tableName).select(`id,${nameColumn},departemen`).eq('period_name', period);
+        if (error) throw error;
+        const cloudRows = data || [];
+        const cloudIds = new Set(cloudRows.map(row => String(row.id)));
+        const cachedIds = new Set(cachedRows.map(row => row.id));
+
+        // Baris cache dengan id asing dipasangkan ke baris cloud yang sama agar tidak menjadi duplikat.
+        const unclaimedIds = new Map();
+        cloudRows.filter(row => !cachedIds.has(String(row.id))).forEach(row => {
+            const identity = identityOf(row[nameColumn], row.departemen);
+            unclaimedIds.set(identity, [...(unclaimedIds.get(identity) || []), String(row.id)]);
+        });
+
+        const updatedAt = new Date().toISOString();
+        const payload = new Map();
+        cachedRows.forEach(row => {
+            const id = cloudIds.has(row.id)
+                ? row.id
+                : unclaimedIds.get(identityOf(row.nama, row.dept))?.shift() || crypto.randomUUID();
+            payload.set(id, { id, period_name: period, nama: row.nama, dept: row.dept, budget: row.budget, updated_at: updatedAt });
+        });
+
+        const rows = [...payload.values()];
+        await window.SmartBaraCore.syncCloudUpsert(tableName, rows, 'id', `${tableName}-cache:${period}`, label, { queueOnFailure: false });
+        return rows.length;
+    }
+
     function normalizeBudgetOptions(rows) {
         const values = new Map();
         (Array.isArray(rows) ? rows : []).forEach(row => {
@@ -973,46 +1016,17 @@ window.RekonsilModule = (function() {
             }
 
             // 5. Sinkronisasi budget akun (tabel smartbara_budget) dari cache localStorage
-            const budgetCacheKey = `smartbara_budget_v2_${period}`;
-            const budgetRows = readBudgetOptionCache(budgetCacheKey);
-            if (budgetRows.length) {
-                try {
-                    const budgetWithPeriod = budgetRows.map(row => ({
-                        ...row,
-                        period_name: period,
-                        nama_akun: row.nama_akun || row.nama || ''
-                    })).filter(row => row.nama_akun);
-                    // Hapus data lama periode ini baru insert (hindari onConflict constraint)
-                    await client.from('smartbara_budget').delete().eq('period_name', period);
-                    if (budgetWithPeriod.length) {
-                        const { error } = await client.from('smartbara_budget').insert(budgetWithPeriod);
-                        if (error) throw error;
-                    }
-                    syncedCount += budgetWithPeriod.length;
-                } catch (err) {
-                    errors.push(`Budget: ${err.message}`);
-                }
+            try {
+                syncedCount += await syncBudgetCacheToCloud(client, 'smartbara_budget', `smartbara_budget_v2_${period}`, period, 'Budget akun');
+            } catch (err) {
+                errors.push(`Budget: ${err.message}`);
             }
 
             // 6. Sinkronisasi budget proyek/site (tabel smartbara_budget_site) dari cache localStorage
-            const budgetSiteCacheKey = `smartbara_budget_site_v2_${period}`;
-            const budgetSiteRows = readBudgetOptionCache(budgetSiteCacheKey);
-            if (budgetSiteRows.length) {
-                try {
-                    const budgetSiteWithPeriod = budgetSiteRows.map(row => ({
-                        ...row,
-                        period_name: period,
-                        nama_proyek_up: row.nama_proyek_up || row.nama || row.nama_proyek || ''
-                    })).filter(row => row.nama_proyek_up);
-                    await client.from('smartbara_budget_site').delete().eq('period_name', period);
-                    if (budgetSiteWithPeriod.length) {
-                        const { error } = await client.from('smartbara_budget_site').insert(budgetSiteWithPeriod);
-                        if (error) throw error;
-                    }
-                    syncedCount += budgetSiteWithPeriod.length;
-                } catch (err) {
-                    errors.push(`Budget Site: ${err.message}`);
-                }
+            try {
+                syncedCount += await syncBudgetCacheToCloud(client, 'smartbara_budget_site', `smartbara_budget_site_v2_${period}`, period, 'Budget proyek');
+            } catch (err) {
+                errors.push(`Budget Site: ${err.message}`);
             }
 
             // 7. Muat ulang data dari cloud untuk memastikan tampilan konsisten dengan yang baru diupload
@@ -1133,8 +1147,9 @@ window.RekonsilModule = (function() {
             return;
         }
 
-        if (!window.SmartBaraCore.canWriteCloud()) {
-            setStatus('Login dengan akun yang memiliki akses tulis ke cloud diperlukan.', true);
+        // Pemulihan mengganti isi periode, jadi juga butuh izin hapus (level Tim hanya bisa menulis).
+        if (!window.SmartBaraCore.canWriteCloud() || !window.SmartBaraCore.canDeleteData()) {
+            setStatus('Pemulihan backup membutuhkan akun dengan akses hapus (Superadmin atau SPV).', true);
             if (fileInput) fileInput.value = '';
             return;
         }
@@ -1174,52 +1189,77 @@ window.RekonsilModule = (function() {
             let restoredCount = 0;
             const errors = [];
 
-            // Fungsi helper: hapus data lama periode lalu insert baru (hindari onConflict constraint)
-            const restoreTable = async (tableName, rows, periodFilterColumn = 'period_name') => {
+            const deleteRows = async (tableName, column, values) => {
+                for (let offset = 0; offset < values.length; offset += 200) {
+                    const { error } = await client.from(tableName).delete().in(column, values.slice(offset, offset + 200));
+                    if (error) throw error;
+                }
+            };
+
+            // Data backup ditulis dulu, baru baris lama yang tidak terpakai dihapus,
+            // sehingga kegagalan di tengah jalan tidak menghilangkan data periode ini.
+            const restoreTable = async (tableName, rows, conflictColumns = '') => {
                 if (!Array.isArray(rows) || !rows.length) return 0;
-                // Hapus semua data periode ini terlebih dahulu
-                await client.from(tableName).delete().eq(periodFilterColumn, period);
-                let count = 0;
+                const { data: oldRows, error: oldRowsError } = await client.from(tableName).select('id').eq('period_name', period);
+                if (oldRowsError) throw oldRowsError;
+
+                const writtenIds = new Set();
                 for (let offset = 0; offset < rows.length; offset += 200) {
                     const batch = rows.slice(offset, offset + 200).map(row => {
-                        const clean = { ...row };
+                        const clean = { ...row, period_name: period };
                         delete clean.id; // biarkan Supabase generate ulang
                         return clean;
                     });
-                    const { error } = await client.from(tableName).insert(batch);
-                    if (error) throw error;
-                    count += batch.length;
+                    const write = conflictColumns
+                        ? client.from(tableName).upsert(batch, { onConflict: conflictColumns })
+                        : client.from(tableName).insert(batch);
+                    const { data, error } = await write.select('id');
+                    if (error) {
+                        // Tabel tanpa kunci unik: buang batch yang sudah masuk agar tidak dobel dengan data lama.
+                        if (!conflictColumns) await deleteRows(tableName, 'id', [...writtenIds]);
+                        throw error;
+                    }
+                    (data || []).forEach(row => writtenIds.add(row.id));
                 }
-                return count;
+                await deleteRows(tableName, 'id', (oldRows || []).map(row => row.id).filter(id => !writtenIds.has(id)));
+                return writtenIds.size;
             };
 
             // 1. smartbara_store
-            restoredCount += await restoreTable('smartbara_store', backup.tables.smartbara_store || [], 'period_name');
+            restoredCount += await restoreTable('smartbara_store', backup.tables.smartbara_store, 'period_name,dept_name');
 
             // 2. smartbara_meta
-            restoredCount += await restoreTable('smartbara_meta', backup.tables.smartbara_meta || [], 'period_name');
+            restoredCount += await restoreTable('smartbara_meta', backup.tables.smartbara_meta, 'period_name,meta_key');
 
             // 3. smartbara_budget
-            restoredCount += await restoreTable('smartbara_budget', backup.tables.smartbara_budget || [], 'period_name');
+            restoredCount += await restoreTable('smartbara_budget', backup.tables.smartbara_budget);
 
             // 4. smartbara_budget_site
-            restoredCount += await restoreTable('smartbara_budget_site', backup.tables.smartbara_site || backup.tables.smartbara_budget_site || [], 'period_name');
+            restoredCount += await restoreTable('smartbara_budget_site', backup.tables.smartbara_site || backup.tables.smartbara_budget_site);
 
-            // 5. smartbara_settings (rekonsil overrides) - hapus by key pattern
+            // 5. smartbara_settings (rekonsil overrides) - key memuat nama periode
             if (Array.isArray(backup.tables.smartbara_settings) && backup.tables.smartbara_settings.length) {
-                await client.from('smartbara_settings').delete().like('key', `%${period}%`);
-                let count = 0;
+                const sourcePeriod = backupPeriod || period;
+                const { data: oldSettings, error: oldSettingsError } = await client.from('smartbara_settings').select('key').like('key', `%${period}%`);
+                if (oldSettingsError) throw oldSettingsError;
+
+                const writtenKeys = new Set();
                 for (let offset = 0; offset < backup.tables.smartbara_settings.length; offset += 200) {
                     const batch = backup.tables.smartbara_settings.slice(offset, offset + 200).map(row => {
-                        const clean = { ...row };
+                        const clean = {
+                            ...row,
+                            key: row.key.replace(sourcePeriod, period),
+                            value: window.SmartBaraCore.rewritePeriodInValue(row.value, sourcePeriod, period)
+                        };
                         delete clean.id;
                         return clean;
                     });
-                    const { error } = await client.from('smartbara_settings').insert(batch);
+                    const { error } = await client.from('smartbara_settings').upsert(batch, { onConflict: 'key' });
                     if (error) throw error;
-                    count += batch.length;
+                    batch.forEach(row => writtenKeys.add(row.key));
                 }
-                restoredCount += count;
+                await deleteRows('smartbara_settings', 'key', (oldSettings || []).map(row => row.key).filter(key => !writtenKeys.has(key)));
+                restoredCount += writtenKeys.size;
             }
 
             // 6. smartbara_history (audit, opsional) - tambah saja, tidak hapus

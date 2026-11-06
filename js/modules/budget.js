@@ -14,7 +14,7 @@ window.BudgetModule = (function() {
             : MONTH_KEYS.map(month => Number(item[`budget_${month}`]) || 0);
         return {
             ...item,
-            nama: item.nama || item.nama_akun || item.nama_proyek || item.account_name || item.project_name || '',
+            nama: item.nama || item.nama_akun || item.nama_proyek_up || item.nama_proyek || item.account_name || item.project_name || '',
             dept: item.dept || item.departemen || item.department || 'UMUM',
             budget
         };
@@ -452,6 +452,18 @@ window.BudgetModule = (function() {
     // DOWNLOAD & UPLOAD TEMPLATE BUDGET (Excel)
     // ============================================================================
 
+    function toTemplateRow(rawItem) {
+        // Baris cloud memakai nama_akun/nama_proyek_up/departemen, bukan nama/dept.
+        const item = normalizeBudgetItem(rawItem);
+        const row = { 'Departemen': item.dept, 'Nama Akun / Proyek': item.nama };
+        const monthNames = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+        monthNames.forEach((month, index) => {
+            row[month] = Number(item.budget[index] || 0);
+        });
+        row['Total'] = item.budget.reduce((sum, value) => sum + Number(value || 0), 0);
+        return row;
+    }
+
     async function downloadBudgetTemplate() {
         const period = window.SmartBaraCore.getActivePeriod();
         const label = budgetType === 'site' ? 'Budget Proyek' : 'Budget Akun';
@@ -462,65 +474,22 @@ window.BudgetModule = (function() {
             await window.SmartBaraConfig.ensureLibrary('sheetjs');
 
             // Ambil data dari items jika ada, jika tidak dari localStorage atau Supabase
-            let rows = [];
-            if (items && items.length) {
-                rows = items.map(item => {
-                    const bArr = Array.isArray(item.budget) ? item.budget : [];
-                    const row = {
-                        'Departemen': item.dept || '',
-                        'Nama Akun / Proyek': item.nama || '',
-                    };
-                    const monthNames = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
-                    for (let i = 0; i < 12; i++) {
-                        row[monthNames[i]] = Number(bArr[i] || 0);
-                    }
-                    row['Total'] = bArr.reduce((s, v) => s + Number(v || 0), 0);
-                    return row;
-                });
-            } else {
-                // Coba dari localStorage
+            let sourceItems = items || [];
+            if (!sourceItems.length) {
                 try {
                     const cached = JSON.parse(localStorage.getItem(storageKey) || '[]');
-                    if (Array.isArray(cached) && cached.length) {
-                        rows = cached.map(item => {
-                            const bArr = Array.isArray(item.budget) ? item.budget : [];
-                            const row = {
-                                'Departemen': item.dept || '',
-                                'Nama Akun / Proyek': item.nama || '',
-                            };
-                            const monthNames = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
-                            for (let i = 0; i < 12; i++) {
-                                row[monthNames[i]] = Number(bArr[i] || 0);
-                            }
-                            row['Total'] = bArr.reduce((s, v) => s + Number(v || 0), 0);
-                            return row;
-                        });
-                    }
+                    if (Array.isArray(cached)) sourceItems = cached;
                 } catch (e) {}
-
-                // Coba dari Supabase jika localStorage kosong
-                if (!rows.length) {
-                    const client = window.SmartBaraCore.getClient();
-                    if (client) {
-                        const { data, error } = await client.from(tableName).select('*').eq('period_name', period);
-                        if (!error && Array.isArray(data) && data.length) {
-                            rows = data.map(item => {
-                                const bArr = Array.isArray(item.budget) ? item.budget : [];
-                                const row = {
-                                    'Departemen': item.dept || '',
-                                    'Nama Akun / Proyek': item.nama || '',
-                                };
-                                const monthNames = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
-                                for (let i = 0; i < 12; i++) {
-                                    row[monthNames[i]] = Number(bArr[i] || 0);
-                                }
-                                row['Total'] = bArr.reduce((s, v) => s + Number(v || 0), 0);
-                                return row;
-                            });
-                        }
-                    }
+            }
+            if (!sourceItems.length) {
+                const client = window.SmartBaraCore.getClient();
+                if (client) {
+                    const { data, error } = await client.from(tableName).select('*').eq('period_name', period);
+                    if (error) throw error;
+                    sourceItems = data || [];
                 }
             }
+            let rows = sourceItems.map(toTemplateRow);
 
             // Jika masih kosong, buat template kosong dengan header saja
             if (!rows.length) {
@@ -620,24 +589,20 @@ window.BudgetModule = (function() {
                 throw new Error('Tidak ada data budget valid yang dapat diimpor.');
             }
 
-            // Simpan ke localStorage
-            const existing = JSON.parse(localStorage.getItem(storageKey) || '[]');
-            const nextItems = [...existing, ...imported];
-            localStorage.setItem(storageKey, JSON.stringify(nextItems));
-            items = nextItems.map(normalizeBudgetItem);
-            renderTable();
-
-            // Simpan ke Supabase (delete lama, insert baru)
-            await client.from(tableName).delete().eq('period_name', period);
-            for (let offset = 0; offset < imported.length; offset += 200) {
-                const batch = imported.slice(offset, offset + 200).map(it => {
-                    const clean = { ...it };
-                    delete clean.id;
-                    return clean;
-                });
-                const { error } = await client.from(tableName).insert(batch);
+            // Simpan data baru dulu; data lama baru dihapus setelah penyimpanan berhasil
+            // agar kegagalan cloud tidak mengosongkan budget periode ini.
+            const { data: oldRows, error: oldRowsError } = await client.from(tableName).select('id').eq('period_name', period);
+            if (oldRowsError) throw oldRowsError;
+            await window.SmartBaraCore.syncCloudUpsert(tableName, imported, 'id', `budget-template:${period}`, 'Template budget', { queueOnFailure: false });
+            const oldIds = (oldRows || []).map(row => row.id);
+            for (let offset = 0; offset < oldIds.length; offset += 200) {
+                const { error } = await client.from(tableName).delete().in('id', oldIds.slice(offset, offset + 200));
                 if (error) throw error;
             }
+
+            localStorage.setItem(storageKey, JSON.stringify(imported));
+            items = imported.map(normalizeBudgetItem);
+            renderTable();
 
             success = true;
             setStatus(`${imported.length} baris budget berhasil diunggah ke periode ${period}.`);

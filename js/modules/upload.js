@@ -40,6 +40,9 @@ window.SmartBaraUpload = (function() {
         { key: 'nov', label: 'Budget November', aliases: ['bgt nov', 'budget nov', 'anggaran nov'] },
         { key: 'des', label: 'Budget Desember', aliases: ['bgt des', 'bgt dec', 'budget des', 'budget dec'] }
     ];
+    // Header file dari Panel Admin > Template Budget > Unduh Template (lihat budget.js).
+    const TEMPLATE_NAME_HEADER = 'namaakunproyek';
+    const TEMPLATE_MONTHS = ['januari', 'februari', 'maret', 'april', 'mei', 'juni', 'juli', 'agustus', 'september', 'oktober', 'november', 'desember'];
 
     function normalizeHeader(value) {
         return String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -136,6 +139,16 @@ window.SmartBaraUpload = (function() {
         return -1;
     }
 
+    // Nama bulan polos hanya diterima pada header template; di file lain kolom seperti
+    // "Januari" bisa berisi nilai actual sehingga tetap wajib berawalan Bgt/Budget/Anggaran.
+    function getBudgetMonthFinder(labels) {
+        if (!labels.some(label => normalizeHeader(label) === TEMPLATE_NAME_HEADER)) return findBudgetMonth;
+        return header => {
+            const monthIndex = findBudgetMonth(header);
+            return monthIndex >= 0 ? monthIndex : TEMPLATE_MONTHS.indexOf(normalizeHeader(header));
+        };
+    }
+
     function getBudgetBlocks(workbook, sheetName) {
         const sheet = workbook?.Sheets?.[sheetName];
         if (!sheet?.['!ref']) return { blocks: [], allHeaders: [] };
@@ -144,8 +157,9 @@ window.SmartBaraUpload = (function() {
         const allHeaders = [];
         matrix.forEach((row, rowIndex) => {
             const headers = row.map(value => String(value ?? '').trim());
-            const nameColumn = headers.findIndex(value => ['description', 'row labels', 'nama akun up', 'nama akun induk', 'nama akun', 'account name', 'akun', 'nama proyek', 'nama proyek up', 'project name', 'proyek up', 'proyek', 'project'].includes(normalizeHeader(value)));
-            const monthColumns = headers.map((header, columnIndex) => ({ columnIndex, monthIndex: findBudgetMonth(header), header }))
+            const findMonth = getBudgetMonthFinder(headers);
+            const nameColumn = headers.findIndex(value => [TEMPLATE_NAME_HEADER, 'description', 'row labels', 'nama akun up', 'nama akun induk', 'nama akun', 'account name', 'akun', 'nama proyek', 'nama proyek up', 'project name', 'proyek up', 'proyek', 'project'].includes(normalizeHeader(value)));
+            const monthColumns = headers.map((header, columnIndex) => ({ columnIndex, monthIndex: findMonth(header), header }))
                 .filter(column => column.monthIndex >= 0);
             if (nameColumn < 0 || !monthColumns.length) return;
             allHeaders.push({ rowIndex, headers, nameColumn, monthColumns, columnOffset });
@@ -524,14 +538,17 @@ window.SmartBaraUpload = (function() {
             : block?.headers || [];
         const mapping = { name: '', department: '', months: {} };
         const nameAliases = budgetKind === 'site'
-            ? ['nama proyek up', 'proyek up', 'nama proyek', 'project name', 'proyek', 'project']
-            : ['description', 'row labels', 'nama akun up', 'nama akun induk', 'nama akun', 'account name', 'akun'];
+            ? [TEMPLATE_NAME_HEADER, 'nama proyek up', 'proyek up', 'nama proyek', 'project name', 'proyek', 'project']
+            : [TEMPLATE_NAME_HEADER, 'description', 'row labels', 'nama akun up', 'nama akun induk', 'nama akun', 'account name', 'akun'];
         const nameColumn = headers.find(header => nameAliases.includes(normalizeHeader(header.label)));
         mapping.name = nameColumn ? nameColumn.index : '';
-        const pic = headers.find(header => normalizeHeader(header.label) === 'pic');
-        if (pic) mapping.department = pic.index;
+        const department = ['pic', 'departemen', 'department', 'dept']
+            .map(alias => headers.find(header => normalizeHeader(header.label) === alias))
+            .find(Boolean);
+        if (department) mapping.department = department.index;
+        const findMonth = getBudgetMonthFinder(headers.map(header => header.label));
         BUDGET_MONTHS.forEach(month => {
-            const found = headers.find(option => findBudgetMonth(option.label) === BUDGET_MONTHS.indexOf(month));
+            const found = headers.find(option => findMonth(option.label) === BUDGET_MONTHS.indexOf(month));
             mapping.months[month.key] = found ? found.index : '';
         });
         return mapping;
@@ -883,7 +900,9 @@ window.SmartBaraUpload = (function() {
                 ? ''
                 : String(cells[Number(mapping.department)] ?? '').trim().toUpperCase();
             const department = departmentValue || String(item.deptName || 'UMUM').trim().toUpperCase();
-            if (departmentValue && item.deptName && departmentValue !== String(item.deptName).toUpperCase()) departmentMismatches++;
+            // Kolom Departemen menentukan departemen tiap baris (file multi departemen), jadi hanya PIC yang dibandingkan dengan departemen file.
+            const isPicColumn = normalizedHeaders[Number(mapping.department)] === 'pic';
+            if (isPicColumn && departmentValue && item.deptName && departmentValue !== String(item.deptName).toUpperCase()) departmentMismatches++;
             const monthlyValues = {};
             let hasAmount = false;
             const missingMonths = [];
@@ -928,7 +947,7 @@ window.SmartBaraUpload = (function() {
 
     function getBudgetRowName(row, budgetKind = getBudgetKind()) {
         const fields = budgetKind === 'site'
-            ? ['nama_proyek', 'nama proyek up', 'project name', 'proyek']
+            ? ['nama_proyek', 'nama proyek up', 'project name', 'proyek', 'nama']
             : ['nama_akun', 'account name', 'nama', 'description'];
         return String(getUploadField(row, fields) || '').trim();
     }
