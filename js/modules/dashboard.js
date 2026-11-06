@@ -2671,8 +2671,8 @@ window.DashboardModule = (function() {
         try {
             const [metaRes, budgetRes, creatorRes, futureBudgetRes, overrideRes] = await Promise.all([
                 client.from('smartbara_meta').select('*').eq('period_name', period),
-                client.from('smartbara_budget').select('*').eq('period_name', period),
-                client.from('smartbara_budget_creator_planning').select('department, quantity, estimated_unit_price').eq('period_name', period),
+                window.SmartBaraCore.fetchPeriodRows('smartbara_budget', period),
+                window.SmartBaraCore.fetchPeriodRows('smartbara_budget_creator_planning', period, { columns: 'department, quantity, estimated_unit_price' }),
                 client.from('smartbara_future_budget').select('rows_data').eq('period_name', period).maybeSingle(),
                 client.from('smartbara_settings').select('key, value').like('key', `smartbara_reconcile_override_${period}_%`)
             ]);

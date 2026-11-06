@@ -59,10 +59,7 @@ window.BudgetModule = (function() {
         }
 
         try {
-            const { data, error } = await client
-                .from(tableName)
-                .select('*')
-                .eq('period_name', period);
+            const { data, error } = await window.SmartBaraCore.fetchPeriodRows(tableName, period);
 
             if (error) throw error;
             const cloudItems = (data || []).map(normalizeBudgetItem);
@@ -158,7 +155,7 @@ window.BudgetModule = (function() {
         try {
             const client = window.SmartBaraCore.getClient();
             if (client) {
-                const { data, error } = await client.from(tableName).select('*').eq('period_name', sourcePeriod);
+                const { data, error } = await window.SmartBaraCore.fetchPeriodRows(tableName, sourcePeriod);
                 if (error) throw error;
                 sourceRows = (data || []).map(normalizeBudgetItem);
             }
@@ -484,7 +481,7 @@ window.BudgetModule = (function() {
             if (!sourceItems.length) {
                 const client = window.SmartBaraCore.getClient();
                 if (client) {
-                    const { data, error } = await client.from(tableName).select('*').eq('period_name', period);
+                    const { data, error } = await window.SmartBaraCore.fetchPeriodRows(tableName, period);
                     if (error) throw error;
                     sourceItems = data || [];
                 }
@@ -591,7 +588,7 @@ window.BudgetModule = (function() {
 
             // Simpan data baru dulu; data lama baru dihapus setelah penyimpanan berhasil
             // agar kegagalan cloud tidak mengosongkan budget periode ini.
-            const { data: oldRows, error: oldRowsError } = await client.from(tableName).select('id').eq('period_name', period);
+            const { data: oldRows, error: oldRowsError } = await window.SmartBaraCore.fetchPeriodRows(tableName, period, { columns: 'id' });
             if (oldRowsError) throw oldRowsError;
             await window.SmartBaraCore.syncCloudUpsert(tableName, imported, 'id', `budget-template:${period}`, 'Template budget', { queueOnFailure: false });
             const oldIds = (oldRows || []).map(row => row.id);

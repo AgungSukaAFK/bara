@@ -299,7 +299,10 @@ window.SmartBaraCore = (function() {
     function inferDefaultDepartmentSelection(user = currentUser) {
         const email = String(user?.email || '').trim().toLowerCase();
         const knownDepartments = ['GA', 'IT', 'LEGAL', 'HR', 'FINANCE', 'HSE', 'LOGISTIK', 'OPERASIONAL', 'PRODUKSI', 'SHE', 'TAMBANG', 'SHIPPING', 'UMUM'];
-        const match = knownDepartments.find(dept => email.includes(dept.toLowerCase()));
+        // Cocokkan per kata di bagian sebelum @: substring membuat semua email @garudamart.com
+        // (mengandung "ga") atau nama berisi "it"/"hr" otomatis terkunci ke satu departemen.
+        const emailTokens = email.split('@')[0].split(/[^a-z0-9]+/).filter(Boolean);
+        const match = knownDepartments.find(dept => emailTokens.includes(dept.toLowerCase()));
         if (match) return [match];
 
         const metadataDept = String(user?.app_metadata?.department || user?.user_metadata?.department || '').trim();
@@ -1012,7 +1015,11 @@ window.SmartBaraCore = (function() {
         if (selectedDepartments.includes('ALL')) return true;
         if (allDepts.length === 0) return false;
         const selected = new Set(selectedDepartments.map(dept => String(dept).toUpperCase()));
-        return allDepts.every(dept => selected.has(String(dept).toUpperCase()));
+        const knownDepts = allDepts.map(dept => String(dept).toUpperCase());
+        // Pilihan yang tidak ada di periode ini jatuh ke semua dept (lihat getSelectedDepartments),
+        // jadi harus dianggap Gabungan agar baris dept tanpa transaksi tidak ikut tersaring.
+        if (!knownDepts.some(dept => selected.has(dept))) return true;
+        return knownDepts.every(dept => selected.has(dept));
     }
 
     function setSelectedDepartments(deptArray) {
@@ -1447,6 +1454,21 @@ window.SmartBaraCore = (function() {
         }
     }
 
+    // PostgREST memotong hasil di 1000 baris, sehingga tanpa paginasi baris sebagian dept
+    // hilang diam-diam. Bentuk hasilnya sama dengan query Supabase: { data, error }.
+    async function fetchPeriodRows(tableName, periodName, { columns = '*', orderBy = 'id', ascending = true } = {}) {
+        const pageSize = 1000;
+        const rows = [];
+        for (let offset = 0; ; offset += pageSize) {
+            let query = supabaseClient.from(tableName).select(columns).eq('period_name', periodName).order(orderBy, { ascending });
+            if (orderBy !== 'id') query = query.order('id');
+            const { data, error } = await query.range(offset, offset + pageSize - 1);
+            if (error) return { data: null, error };
+            rows.push(...(data || []));
+            if (!data || data.length < pageSize) return { data: rows, error: null };
+        }
+    }
+
     async function periodHasData(periodName) {
         const periodTables = [
             'smartbara_store', 'smartbara_meta', 'smartbara_budget', 'smartbara_budget_site',
@@ -1812,6 +1834,7 @@ window.SmartBaraCore = (function() {
         loadPeriodStore,
         getDepartments,
         getSelectedDepartments,
+        fetchPeriodRows,
         isCombinedDepartments,
         setSelectedDepartments,
         getTransactions,
