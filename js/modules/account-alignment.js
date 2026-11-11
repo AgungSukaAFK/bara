@@ -163,7 +163,7 @@ window.AccountAlignmentModule = (function() {
         const client = window.SmartBaraCore.getClient();
         if (!client) return rows;
         try {
-            const { data, error } = await client.from('smartbara_budget').select('*').eq('period_name', period);
+            const { data, error } = await window.SmartBaraCore.fetchPeriodRows('smartbara_budget', period);
             if (error) throw error;
             if (Array.isArray(data) && data.length) rows = data;
         } catch(error) {

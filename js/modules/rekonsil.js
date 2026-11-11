@@ -126,7 +126,8 @@ window.RekonsilModule = (function() {
                 transactionRowsCache = null;
             }
             const selectedDepts = new Set(window.SmartBaraCore.getSelectedDepartments().map(dept => String(dept).toUpperCase()));
-            (metaRes.data || []).filter(meta => selectedDepts.has(String(meta.meta_key || '').toUpperCase())).forEach(m => {
+            const isCombined = window.SmartBaraCore.isCombinedDepartments();
+            (metaRes.data || []).filter(meta => isCombined || selectedDepts.has(String(meta.meta_key || '').toUpperCase())).forEach(m => {
                 metaData[m.meta_key] = m;
                 window.SmartBaraCore.setCloudVersion(period, `meta:${m.meta_key}`, m.updated_at);
             });
@@ -170,7 +171,7 @@ window.RekonsilModule = (function() {
         let logs = (result.data || []).filter(log => isRekonsilHistoryLog(log));
 
         const selectedDepartments = window.SmartBaraCore.getSelectedDepartments().map(dept => String(dept || '').toUpperCase());
-        if (selectedDepartments.length === 1 && selectedDepartments[0] === 'GA') {
+        if (!window.SmartBaraCore.isCombinedDepartments() && selectedDepartments.length === 1 && selectedDepartments[0] === 'GA') {
             logs = logs.filter(log => getHistoryLogDept(log) === 'GA');
         }
 
@@ -287,9 +288,13 @@ window.RekonsilModule = (function() {
         if (!deptFilter) return;
 
         const activeDepartments = window.SmartBaraCore.getSelectedDepartments().map(dept => String(dept || '').toUpperCase());
-        const deptList = [...new Set((activeDepartments.length ? activeDepartments : Object.keys(deptData).map(dept => String(dept || '').toUpperCase())).filter(Boolean))].sort();
+        const isCombined = window.SmartBaraCore.isCombinedDepartments();
+        const scopedDepartments = isCombined
+            ? [...Object.keys(deptData), ...historyLogs.map(getHistoryLogDept)].map(dept => String(dept || '').toUpperCase())
+            : activeDepartments;
+        const deptList = [...new Set(scopedDepartments.filter(dept => dept && dept !== 'ALL'))].sort();
 
-        if (deptList.length === 1 && deptList[0] !== 'ALL') {
+        if (!isCombined && deptList.length === 1) {
             historyFilterDept = deptList[0];
         } else if (!deptList.includes(historyFilterDept)) {
             historyFilterDept = 'all';

@@ -44,7 +44,10 @@ window.BudgetFutureModule = (function() {
         updatePeriodTitles();
         bindEvents();
         window.addEventListener('smartbara:store_loaded', event => {
-            if (event.detail?.period === activePeriod) refreshBaselines();
+            if (event.detail?.period !== activePeriod) return;
+            populateFilterOptions();
+            refreshBaselines();
+            if (rowsData.length) renderSyncStatus();
         });
         window.addEventListener('smartbara:store_updated', event => {
             if (event.detail?.period === activePeriod) refreshBaselines();
@@ -611,7 +614,7 @@ window.BudgetFutureModule = (function() {
             renderTable();
             populateFilterOptions();
 
-            if (statusEl) statusEl.textContent = `Tersinkron (${rowsData.length} baris rencana)`;
+            renderSyncStatus();
         } catch(err) {
             console.error('Error loading future budget:', err);
             if (statusEl) statusEl.textContent = 'Gagal memuat dari cloud, menggunakan data lokal';
@@ -631,10 +634,7 @@ window.BudgetFutureModule = (function() {
 
             if (SmartBaraCore.supabase) {
                 try {
-                    const { data: cloudBudgetRows, error: budgetError } = await SmartBaraCore.supabase
-                        .from('smartbara_budget')
-                        .select('*')
-                        .eq('period_name', activePeriodKey);
+                    const { data: cloudBudgetRows, error: budgetError } = await SmartBaraCore.fetchPeriodRows('smartbara_budget', activePeriodKey);
                     if (budgetError) throw budgetError;
                     budgetRows = Array.isArray(cloudBudgetRows) ? cloudBudgetRows : [];
                     localStorage.setItem(localBudgetKey, JSON.stringify(budgetRows));
@@ -671,14 +671,29 @@ window.BudgetFutureModule = (function() {
         loadBaselines();
     }
 
+    function getGlobalDepartmentSet() {
+        if (SmartBaraCore.isCombinedDepartments()) return null;
+        return new Set(SmartBaraCore.getSelectedDepartments().map(dept => String(dept).toUpperCase()));
+    }
+
     function getEffectiveDepartmentSet() {
         const pageFilter = document.getElementById('futureBudgetDeptFilter')?.value;
         const filteredValue = String(pageFilter || '').trim();
         if (filteredValue) {
             return new Set([filteredValue.toUpperCase()]);
         }
-        if (SmartBaraCore.isCombinedDepartments()) return null;
-        return new Set(SmartBaraCore.getSelectedDepartments().map(dept => String(dept).toUpperCase()));
+        return getGlobalDepartmentSet();
+    }
+
+    function renderSyncStatus() {
+        const statusEl = document.getElementById('futureBudgetStatus');
+        if (!statusEl) return;
+        const plannedDepts = new Set(rowsData.map(row => String(row.dept || '').toUpperCase()));
+        const missingDepts = SmartBaraCore.getDepartments().filter(dept => !plannedDepts.has(String(dept).toUpperCase()));
+        const status = `Tersinkron (${rowsData.length} baris rencana)`;
+        statusEl.textContent = missingDepts.length
+            ? `${status} · ${missingDepts.join(', ')} belum ada di rencana, klik Refresh Aktual untuk menambahkan`
+            : status;
     }
 
     function getDepartmentScopedRows() {
@@ -770,9 +785,12 @@ window.BudgetFutureModule = (function() {
         const deptFilter = document.getElementById('futureBudgetDeptFilter');
         if (!deptFilter) return;
 
-        const selectedDepts = new Set(SmartBaraCore.getSelectedDepartments().map(dept => String(dept).toUpperCase()));
-        const filterByGlobalDept = !SmartBaraCore.isCombinedDepartments();
-        const depts = [...new Set(getDepartmentScopedRows().map(row => row.dept).filter(Boolean))].sort();
+        // Opsi mengikuti filter global saja. Filter halaman tidak boleh ikut menyaring,
+        // kalau tidak dropdown menyusut menjadi satu dept yang sedang dipilih.
+        const globalDepts = getGlobalDepartmentSet();
+        const depts = [...new Set([...rowsData.map(row => row.dept), ...SmartBaraCore.getDepartments()]
+            .map(dept => String(dept || '').trim().toUpperCase())
+            .filter(dept => dept && (!globalDepts || globalDepts.has(dept))))].sort();
         const currentVal = deptFilter.value;
         deptFilter.innerHTML = '<option value="">Semua Departemen</option>' + 
             depts.map(d => `<option value="${SmartBaraFormatters.escapeHtml(d)}" ${d === currentVal ? 'selected' : ''}>${SmartBaraFormatters.escapeHtml(d)}</option>`).join('');
@@ -780,14 +798,10 @@ window.BudgetFutureModule = (function() {
 
     function getFilteredFutureRows() {
         const searchTerm = (document.getElementById('futureBudgetSearch')?.value || '').trim().toLowerCase();
-        const selectedDept = document.getElementById('futureBudgetDeptFilter')?.value || '';
-        return getDepartmentScopedRows().filter(row => {
-            const matchesSearch = !searchTerm ||
-                (row.nama_akun && row.nama_akun.toLowerCase().includes(searchTerm)) ||
-                (row.dept && row.dept.toLowerCase().includes(searchTerm)) ||
-                (row.proyek && row.proyek.toLowerCase().includes(searchTerm));
-            return matchesSearch && (!selectedDept || row.dept === selectedDept);
-        });
+        return getDepartmentScopedRows().filter(row => !searchTerm ||
+            (row.nama_akun && row.nama_akun.toLowerCase().includes(searchTerm)) ||
+            (row.dept && row.dept.toLowerCase().includes(searchTerm)) ||
+            (row.proyek && row.proyek.toLowerCase().includes(searchTerm)));
     }
 
     function detailButton(key, rowId, content, className = '', displayIndex = '') {
@@ -1910,6 +1924,7 @@ window.BudgetFutureModule = (function() {
             loadData().then(() => rowsData.length ? null : refreshFromActual(false));
         });
         window.addEventListener('smartbara:dept_filter_change', () => {
+            populateFilterOptions();
             renderKPIs();
             renderTable();
             refreshBaselines();

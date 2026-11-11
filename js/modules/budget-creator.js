@@ -132,7 +132,7 @@ window.BudgetCreatorModule = (function() {
         try {
             const [dimRes, itemRes] = await Promise.all([
                 client.rpc('list_smartbara_planning_dimensions', { p_period: period }),
-                client.from('smartbara_budget_creator_planning').select('*').eq('period_name', period).order('created_at', { ascending: false })
+                window.SmartBaraCore.fetchPeriodRows('smartbara_budget_creator_planning', period, { orderBy: 'created_at', ascending: false })
             ]);
 
             if (itemRes.error && /not exist|schema cache|could not find/i.test(itemRes.error.message || '')) {
@@ -993,13 +993,32 @@ window.BudgetCreatorModule = (function() {
         });
     }
 
+    function syncDepartmentFilterOptions() {
+        const deptFilter = document.getElementById('creatorDeptFilter');
+        if (!deptFilter) return;
+        const selectedDepts = new Set(window.SmartBaraCore.getSelectedDepartments().map(value => String(value).toUpperCase()));
+        const filterByGlobalDept = !window.SmartBaraCore.isCombinedDepartments();
+        const depts = [...new Set(items.map(item => item.department).filter(Boolean))]
+            .filter(dept => !filterByGlobalDept || selectedDepts.has(String(dept).toUpperCase()))
+            .sort();
+        const currentValue = deptFilter.value;
+        while (deptFilter.children.length > 1) deptFilter.lastElementChild.remove();
+        depts.forEach(dept => {
+            const option = document.createElement('option');
+            option.value = dept;
+            option.textContent = dept;
+            deptFilter.appendChild(option);
+        });
+        deptFilter.value = depts.includes(currentValue) ? currentValue : '';
+    }
+
     function renderTable() {
         const tbody = document.getElementById('creatorTableBody');
         const countEl = document.getElementById('creatorStatCount');
         const totalEl = document.getElementById('creatorStatTotal');
         const highEl = document.getElementById('creatorStatHigh');
         const pendingEl = document.getElementById('creatorStatPending');
-        const deptFilter = document.getElementById('creatorDeptFilter');
+        syncDepartmentFilterOptions();
 
         const filtered = getFilteredItems();
         const totalRp = filtered.reduce((sum, it) => sum + (Number(it.quantity) || 0) * (Number(it.estimated_unit_price) || 0), 0);
@@ -1010,17 +1029,6 @@ window.BudgetCreatorModule = (function() {
         if (totalEl) totalEl.textContent = window.Formatters.formatRupiah(totalRp);
         if (highEl) highEl.textContent = highCount.toLocaleString('id-ID');
         if (pendingEl) pendingEl.textContent = pendingCount.toLocaleString('id-ID');
-
-        // Populate department filter options if needed
-        if (deptFilter && deptFilter.children.length <= 1) {
-            const depts = [...new Set(items.map(it => it.department).filter(Boolean))].sort();
-            depts.forEach(d => {
-                const opt = document.createElement('option');
-                opt.value = d;
-                opt.textContent = d;
-                deptFilter.appendChild(opt);
-            });
-        }
 
         if (!tbody) return;
 

@@ -40,8 +40,8 @@ window.LaporanModule = (function() {
         try {
             const [storeRes, accountBudgetRes, projectBudgetRes] = await Promise.all([
                 client.from('smartbara_store').select('*').eq('period_name', period),
-                client.from('smartbara_budget').select('*').eq('period_name', period),
-                client.from('smartbara_budget_site').select('*').eq('period_name', period)
+                window.SmartBaraCore.fetchPeriodRows('smartbara_budget', period),
+                window.SmartBaraCore.fetchPeriodRows('smartbara_budget_site', period)
             ]);
             if (storeRes.error) throw storeRes.error;
             const allDeptData = {};
@@ -58,7 +58,10 @@ window.LaporanModule = (function() {
             });
             const selectedDepartments = new Set(window.SmartBaraCore.getSelectedDepartments());
             const normalizedSelection = new Set([...selectedDepartments].map(dept => String(dept).toUpperCase()));
-            deptData = Object.fromEntries(Object.entries(allDeptData).filter(([dept]) => normalizedSelection.has(String(dept).toUpperCase())));
+            // Mode Gabungan memakai hasil cloud apa adanya; daftar dept di core bisa berasal dari cache lama.
+            deptData = window.SmartBaraCore.isCombinedDepartments()
+                ? allDeptData
+                : Object.fromEntries(Object.entries(allDeptData).filter(([dept]) => normalizedSelection.has(String(dept).toUpperCase())));
             if (!accountBudgetRes.error && Array.isArray(accountBudgetRes.data) && (accountBudgetRes.data.length || !accountBudgets.length)) accountBudgets = accountBudgetRes.data;
             if (!projectBudgetRes.error && Array.isArray(projectBudgetRes.data) && (projectBudgetRes.data.length || !projectBudgets.length)) projectBudgets = projectBudgetRes.data;
             localStorage.setItem(`smartbara_budget_v2_${period}`, JSON.stringify(accountBudgets));
@@ -193,7 +196,11 @@ window.LaporanModule = (function() {
         const select = document.getElementById('laporanDeptFilter');
         if (!select) return;
         const currentValue = select.value;
-        const departments = Object.keys(deptData).sort();
+        const isCombined = window.SmartBaraCore.isCombinedDepartments();
+        const allowedDepartments = new Set(window.SmartBaraCore.getSelectedDepartments().map(dept => String(dept).toUpperCase()));
+        const budgetDepartments = [...accountBudgets, ...projectBudgets].map(budgetDepartment)
+            .filter(dept => isCombined || allowedDepartments.has(dept));
+        const departments = [...new Set([...Object.keys(deptData).map(dept => String(dept).toUpperCase()), ...budgetDepartments])].sort();
         select.innerHTML = '<option value="">Semua Dept Terpilih</option>' + departments
             .map(dept => `<option value="${window.Formatters.escapeHtml(dept)}">${window.Formatters.escapeHtml(dept)}</option>`)
             .join('');
