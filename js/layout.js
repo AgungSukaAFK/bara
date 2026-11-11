@@ -22,6 +22,7 @@ window.SmartBaraLayout = (function() {
         'budget-creator': '<circle cx="9" cy="20" r="1"/><circle cx="18" cy="20" r="1"/><path d="M2 3h3l2.6 12.4a2 2 0 0 0 2 1.6h8.8a2 2 0 0 0 2-1.6L22 7H6"/>',
         'budget-future': '<path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M8 15v2"/><path d="M13 10v7"/><path d="M18 6v11"/>',
         asset: '<path d="M21 8 12 3 3 8v8l9 5 9-5Z"/><path d="m3 8 9 5 9-5"/><path d="M12 13v8"/>',
+        'kuesioner-budget': '<path d="M9 3h6a1 1 0 0 1 1 1v1H8V4a1 1 0 0 1 1-1Z"/><path d="M16 5h2a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h2"/><path d="m9 13 2 2 4-4"/>',
         monthly: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18"/><path d="M8 3v4"/><path d="M16 3v4"/>',
         'user-guide': '<path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3Z"/>',
         users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.9"/><path d="M16 3.1a4 4 0 0 1 0 7.8"/>',
@@ -48,6 +49,7 @@ window.SmartBaraLayout = (function() {
         { id: 'budget-analysis', label: 'Analisa Kenaikan Budget', href: 'budget-analysis.html', icon: '📈' },
         { id: 'budget-creator', label: 'Budget Creator Planning', href: 'budget-creator.html', icon: '🛒', highlight: true },
         { id: 'budget-future', label: 'Anggaran Masa Depan', href: 'budget-future.html', icon: '📈' },
+        { id: 'kuesioner-budget', label: 'Kuesioner Budget 2027', href: 'https://budget-2027-ab.vercel.app/', icon: '📝', external: true },
         { id: 'asset', label: 'Asset Monitoring', href: 'smart-asset-project/index.html', icon: '💎' },
         { id: 'monthly', label: 'Monthly Report', href: 'monthly.html', icon: '📅' },
         { id: 'user-guide', label: 'User Guide', href: 'user-guide.html', icon: '📘' },
@@ -395,7 +397,7 @@ window.SmartBaraLayout = (function() {
         const navHtml = visibleMenuItems.map(item => {
             const isActive = item.id === activePageId;
             return `
-                <a href="${item.href}" title="${item.label}" class="nav-link ${isActive ? 'active' : ''} ${item.highlight ? 'border border-teal-500/30' : ''}">
+                <a href="${item.href}" title="${item.label}"${item.external ? ' target="_blank" rel="noopener noreferrer"' : ''} class="nav-link ${isActive ? 'active' : ''} ${item.highlight ? 'border border-teal-500/30' : ''}">
                     <span class="nav-icon text-base">${themedIcon(item.icon, item.id)}</span>
                     <span class="nav-label">${item.label}</span>
                 </a>
