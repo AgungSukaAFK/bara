@@ -847,6 +847,7 @@ button:not([data-no-shine]):not(:disabled):not([aria-disabled="true"]):not(.side
   color: rgba(226, 232, 240, 0.9);
   line-height: 1.6;
   font-size: 0.82rem;
+  white-space: pre-line;
 }
 
 .smartbara-dialog-actions {

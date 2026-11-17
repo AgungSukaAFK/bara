@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Rekonsil Anggaran - Smart BARA 7.10 HZ</title>
-    <link rel="stylesheet" href="css/app.css?v=20261102-smooth-loading">
+    <link rel="stylesheet" href="css/app.css?v=20261117-hapus-semua">
     <link rel="stylesheet" href="css/themes.css?v=20261106-themes">
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="js/theme.js?v=20261106-themes"></script>
@@ -31,9 +31,11 @@
                     <h2 class="text-2xl font-black text-white m-0 tracking-tight">Rekonsil Anggaran</h2>
                     <p class="text-xs text-slate-400 mt-1 m-0">Pencocokan nilai finance dengan rekonsil manual per transaksi, adjustment, dan catatan audit.</p>
                 </div>
-                <div class="flex items-center gap-2">
+                <div class="flex flex-wrap items-center gap-2">
                     <select id="rekonsilSourcePeriod" class="form-select text-xs" aria-label="Periode sumber rekonsil"></select>
                     <button type="button" onclick="RekonsilModule.pullChangesFromPeriod()" class="btn btn-secondary text-xs whitespace-nowrap" title="Tarik penyesuaian dan catatan manual dari periode sumber">Tarik Perubahan</button>
+                    <button type="button" onclick="RekonsilModule.downloadBackupPeriod()" class="btn btn-secondary text-xs whitespace-nowrap" title="Unduh seluruh data periode aktif sebagai file JSON">Unduh Backup</button>
+                    <button type="button" onclick="RekonsilModule.deleteAllData()" class="btn btn-danger text-xs whitespace-nowrap" title="Hapus semua transaksi rekonsil departemen yang sedang dipilih (backup diunduh otomatis)">Hapus Semua Data</button>
                     <span id="rekonsilStatusText" class="text-xs text-slate-400 font-semibold"></span>
                 </div>
             </div>
@@ -166,10 +168,10 @@
     <!-- Scripts -->
     <script src="js/config.js?v=20261105-goa"></script>
     <script src="js/utils/formatters.js?v=20261101-final-rekonsil"></script>
-    <script src="js/core.js?v=20261106-safe-cloud-write"></script>
+    <script src="js/core.js?v=20261117-hapus-semua"></script>
     <script src="js/modules/upload.js?v=20261106-budget-template-upload"></script>
     <script src="js/layout.js?v=20261106-themes"></script>
-    <script src="js/modules/rekonsil.js?v=20261106-safe-cloud-write"></script>
+    <script src="js/modules/rekonsil.js?v=20261117-hapus-semua"></script>
     <script>
         document.addEventListener('DOMContentLoaded', async () => {
             await window.SmartBaraCore.init();

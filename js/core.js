@@ -926,7 +926,14 @@ window.SmartBaraCore = (function() {
                         safeLocalStorageSet(`smartbara_store_updated_at_${periodName}`, String(Date.now()));
                         showSyncStatus(`Terhubung: ${storeRows.length} departemen dimuat`, 'success');
                     } else {
-                        if (!localCache) databaseDept = {};
+                        // Cloud kosong: cache lokal hanya dipertahankan bila masih ada antrean tulis
+                        // transaksi periode ini; jika tidak, cache itu sisa data yang sudah dihapus.
+                        const hasPendingStoreWrites = readPendingCloudWrites()
+                            .some(job => job.type === 'department-store' && job.periodName === periodName);
+                        if (!localCache || !hasPendingStoreWrites) {
+                            databaseDept = {};
+                            removeStoreCache(periodName);
+                        }
                         showSyncStatus('Periode aktif belum memiliki data transaksi.', 'info');
                     }
                     cloudLoadedPeriods.add(periodName);
@@ -1128,6 +1135,75 @@ window.SmartBaraCore = (function() {
             console.error('Save department store cloud error:', error);
             throw error;
         }
+    }
+
+    // Hapus massal baris tabel periode berdasarkan id (200 id per request), sekaligus membuang
+    // antrean tulis tertunda untuk baris tersebut agar tidak muncul kembali saat antrean dikirim.
+    async function deletePeriodRowsByIds(tableName, periodName, ids, versionKeyPrefix = '') {
+        requireAccess('delete');
+        if (!periodName) throw new Error('Periode penyimpanan tidak tersedia.');
+        if (!supabaseClient) throw new Error('Koneksi Supabase tidak tersedia.');
+        const idList = [...new Set((Array.isArray(ids) ? ids : []).map(id => String(id || '')).filter(Boolean))];
+        for (let offset = 0; offset < idList.length; offset += 200) {
+            const { error } = await supabaseClient.from(tableName).delete()
+                .eq('period_name', periodName)
+                .in('id', idList.slice(offset, offset + 200));
+            if (error) throw error;
+        }
+        const idSet = new Set(idList);
+        idList.forEach(id => delete cloudVersions[`${periodName}:${versionKeyPrefix}${id}`]);
+        const queue = readPendingCloudWrites();
+        const nextQueue = queue.flatMap(job => {
+            if (job.tableName !== tableName) return [job];
+            if (job.filters?.id !== undefined) {
+                return job.periodName === periodName && idSet.has(String(job.filters.id)) ? [] : [job];
+            }
+            if (Array.isArray(job.rows)) {
+                const rows = job.rows.filter(row => !(row?.period_name === periodName && idSet.has(String(row.id))));
+                return rows.length ? [{ ...job, rows }] : [];
+            }
+            return [job];
+        });
+        if (nextQueue.length !== queue.length || nextQueue.some((job, index) => job !== queue[index])) writePendingCloudWrites(nextQueue);
+        return idList.length;
+    }
+
+    // Hapus data transaksi (smartbara_store) beberapa departemen pada satu periode.
+    async function deleteDepartmentStores(periodName, departments) {
+        requireAccess('delete');
+        if (!periodName) throw new Error('Periode penyimpanan tidak tersedia.');
+        if (!supabaseClient) throw new Error('Koneksi Supabase tidak tersedia.');
+        const targets = new Set((Array.isArray(departments) ? departments : []).map(dept => String(dept || '').trim().toUpperCase()).filter(Boolean));
+        if (!targets.size) return 0;
+
+        const { data, error: readError } = await supabaseClient.from('smartbara_store').select('id, dept_name').eq('period_name', periodName);
+        if (readError) throw readError;
+        const ids = (data || []).filter(row => targets.has(String(row.dept_name || '').toUpperCase())).map(row => row.id);
+        for (let offset = 0; offset < ids.length; offset += 200) {
+            const { error } = await supabaseClient.from('smartbara_store').delete().in('id', ids.slice(offset, offset + 200));
+            if (error) throw error;
+        }
+
+        const queue = readPendingCloudWrites();
+        const nextQueue = queue.filter(job => !(job.type === 'department-store' && job.periodName === periodName && targets.has(String(job.deptName || '').toUpperCase())));
+        if (nextQueue.length !== queue.length) writePendingCloudWrites(nextQueue);
+        targets.forEach(dept => delete cloudVersions[`${periodName}:${dept}`]);
+
+        if (periodName === activePeriod) {
+            Object.keys(databaseDept || {}).forEach(dept => {
+                if (targets.has(String(dept).toUpperCase())) delete databaseDept[dept];
+            });
+            if (Object.keys(databaseDept).length) {
+                safeLocalStorageSet(`smartbara_store_${periodName}`, JSON.stringify(databaseDept));
+                safeLocalStorageSet(`smartbara_store_updated_at_${periodName}`, String(Date.now()));
+            } else {
+                removeStoreCache(periodName);
+            }
+            dispatchCoreEvent('store_loaded', { period: periodName, databaseDept });
+        } else {
+            removeStoreCache(periodName);
+        }
+        return ids.length;
     }
 
     function mapBudgetCloudValues(tableName, values) {
@@ -1846,6 +1922,8 @@ window.SmartBaraCore = (function() {
         syncCloudUpsert,
         rewritePeriodInValue,
         deleteVersionedRow,
+        deletePeriodRowsByIds,
+        deleteDepartmentStores,
         onRealtimeChange,
         getSyncHistory,
         getLatestSyncEntry,

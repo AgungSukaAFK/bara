@@ -196,13 +196,70 @@ window.RekonsilModule = (function() {
         return String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
     }
 
+    // Cache nama kolom ternormalisasi per baris: getTransactionField dipanggil puluhan kali per baris
+    // untuk belasan ribu transaksi, jadi normalisasi kunci tidak boleh diulang di setiap panggilan.
+    const normalizedNameCache = new Map();
+    const fieldKeyCache = new WeakMap();
+
+    function getNormalizedName(name) {
+        let normalized = normalizedNameCache.get(name);
+        if (normalized === undefined) {
+            normalized = normalizeFieldName(name);
+            normalizedNameCache.set(name, normalized);
+        }
+        return normalized;
+    }
+
+    function getFieldKeyMap(row) {
+        let keyMap = fieldKeyCache.get(row);
+        if (!keyMap) {
+            keyMap = new Map();
+            for (const key of Object.keys(row)) {
+                const normalized = getNormalizedName(key);
+                if (!keyMap.has(normalized)) keyMap.set(normalized, key);
+            }
+            fieldKeyCache.set(row, keyMap);
+        }
+        return keyMap;
+    }
+
     function getTransactionField(row, names) {
-        const entries = Object.entries(row || {});
+        if (!row || typeof row !== 'object') return undefined;
+        const keyMap = getFieldKeyMap(row);
         for (const name of names) {
-            const entry = entries.find(([key]) => normalizeFieldName(key) === normalizeFieldName(name));
-            if (entry) return entry[1];
+            const key = keyMap.get(getNormalizedName(name));
+            if (key !== undefined && Object.prototype.hasOwnProperty.call(row, key)) return row[key];
+            // Kolom yang ditambahkan setelah cache dibuat (mis. nama_akun_manual) dicari langsung.
+            if (Object.prototype.hasOwnProperty.call(row, name)) return row[name];
         }
         return undefined;
+    }
+
+    // Indeks id transaksi -> { dept, row } pada deptData; dibangun ulang otomatis bila array departemen berganti.
+    let rowIndexCache = null;
+
+    function getRowIndex() {
+        const entries = Object.entries(deptData);
+        const isCurrent = rowIndexCache
+            && rowIndexCache.arrays.size === entries.length
+            && entries.every(([dept, rows]) => rowIndexCache.arrays.get(dept) === rows && rowIndexCache.lengths.get(dept) === rows?.length);
+        if (isCurrent) return rowIndexCache.map;
+        const map = new Map();
+        const arrays = new Map();
+        const lengths = new Map();
+        entries.forEach(([dept, rows]) => {
+            arrays.set(dept, rows);
+            lengths.set(dept, rows?.length);
+            (Array.isArray(rows) ? rows : []).forEach(row => {
+                if (row?.id !== undefined && !map.has(row.id)) map.set(row.id, { dept, row });
+            });
+        });
+        rowIndexCache = { map, arrays, lengths };
+        return map;
+    }
+
+    function locateRow(id) {
+        return getRowIndex().get(id) || null;
     }
 
     function toNumber(value) {
@@ -310,7 +367,8 @@ window.RekonsilModule = (function() {
     function getTransactionTableData() {
         if (transactionRowsCache) return transactionRowsCache;
 
-        const rows = Object.entries(deptData).flatMap(([dept, items]) => withStableIds(items, dept)
+        // deptData sudah memakai id stabil (applyTransactionOverrides), jadi tidak perlu dihitung ulang.
+        const rows = Object.entries(deptData).flatMap(([dept, items]) => (Array.isArray(items) ? items : [])
             .map(row => ({ ...row, dept: row.dept || dept })));
         const getMonth = row => {
             const date = window.SmartBaraFormatters.normalizeDate(getTransactionField(row, ['tanggal', 'tgl', 'date']));
@@ -327,22 +385,39 @@ window.RekonsilModule = (function() {
             row.catatan,
             row.catatan_manual
         ].map(value => String(value || '').toLocaleLowerCase('id-ID')).join(' ');
-        const cachedRows = rows.map(row => ({ ...row, _searchText: getSearchText(row), _month: getMonth(row) }));
+        // Nilai turunan dihitung sekali per baris lalu dipakai ulang oleh filter, tabel, dan export.
+        const cachedRows = rows.map(row => ({
+            ...row,
+            _searchText: getSearchText(row),
+            _month: getMonth(row),
+            _finance: getFinanceValue(row),
+            _reconcile: getReconcileValue(row),
+            _needsReconciliation: needsReconciliation(row),
+            _changed: hasTransactionChanges(row)
+        }));
         const activeDepartments = new Set(Object.keys(deptData).map(dept => dept.toUpperCase()));
         const activeMeta = Object.entries(metaData)
             .filter(([dept]) => activeDepartments.has(String(dept).toUpperCase()))
             .map(([, meta]) => meta);
-        const financeTotal = rows.reduce((sum, row) => sum + getFinanceValue(row), 0)
-            + activeMeta.reduce((sum, meta) => sum + toNumber(meta.adj_sistem), 0);
-        const reconcileTotal = rows.reduce((sum, row) => sum + getReconcileValue(row), 0)
-            + activeMeta.reduce((sum, meta) => sum + toNumber(meta.adj_bank), 0);
-        const reconciliationRows = rows.filter(needsReconciliation);
-        const reconciledCount = reconciliationRows.filter(row => Math.abs(getReconcileValue(row)) > 0.01).length;
-        const changedCount = new Set(rows.filter(hasTransactionChanges).map(row => row.id)).size;
+        let financeTotal = activeMeta.reduce((sum, meta) => sum + toNumber(meta.adj_sistem), 0);
+        let reconcileTotal = activeMeta.reduce((sum, meta) => sum + toNumber(meta.adj_bank), 0);
+        let reconciliationCount = 0;
+        let reconciledCount = 0;
+        const changedIds = new Set();
+        cachedRows.forEach(row => {
+            financeTotal += row._finance;
+            reconcileTotal += row._reconcile;
+            if (row._needsReconciliation) {
+                reconciliationCount++;
+                if (Math.abs(row._reconcile) > 0.01) reconciledCount++;
+            }
+            if (row._changed) changedIds.add(row.id);
+        });
+        const changedCount = changedIds.size;
         const setText = (id, value) => { const element = document.getElementById(id); if (element) element.textContent = value; };
         setText('rekonsilStatFinance', window.Formatters.formatRupiah(financeTotal));
         setText('rekonsilStatReconcile', window.Formatters.formatRupiah(reconcileTotal));
-        setText('rekonsilStatMatched', `${reconciledCount.toLocaleString('id-ID')} / ${reconciliationRows.length.toLocaleString('id-ID')}`);
+        setText('rekonsilStatMatched', `${reconciledCount.toLocaleString('id-ID')} / ${reconciliationCount.toLocaleString('id-ID')}`);
         setText('rekonsilStatChanged', changedCount.toLocaleString('id-ID'));
 
         transactionRowsCache = { rows: cachedRows };
@@ -446,8 +521,8 @@ window.RekonsilModule = (function() {
         const query = (document.getElementById('rekonsilTransactionSearch')?.value || '').trim().toLocaleLowerCase('id-ID');
         const month = document.getElementById('rekonsilTransactionMonthFilter')?.value || '';
         return rows.filter(row => {
-            if (transactionFilter === 'unreconciled' && (!needsReconciliation(row) || Math.abs(getReconcileValue(row)) > 0.01)) return false;
-            if (transactionFilter === 'changed' && !hasTransactionChanges(row)) return false;
+            if (transactionFilter === 'unreconciled' && (!row._needsReconciliation || Math.abs(row._reconcile) > 0.01)) return false;
+            if (transactionFilter === 'changed' && !row._changed) return false;
             if (month && row._month !== month) return false;
             return !query || row._searchText.includes(query);
         });
@@ -483,20 +558,58 @@ window.RekonsilModule = (function() {
         }
     }
 
+    // Lookup & markup opsi di-cache per daftar opsi agar tidak dibangun ulang untuk setiap baris.
+    const optionLookupCache = new WeakMap();
+    const optionMarkupCache = new WeakMap();
+
+    function getOptionLookup(options) {
+        let lookup = optionLookupCache.get(options);
+        if (!lookup) {
+            lookup = new Map();
+            options.forEach(value => {
+                const key = normalizeFieldName(value);
+                if (!lookup.has(key)) lookup.set(key, value);
+            });
+            optionLookupCache.set(options, lookup);
+        }
+        return lookup;
+    }
+
+    function getOptionMarkup(options) {
+        let markup = optionMarkupCache.get(options);
+        if (markup === undefined) {
+            markup = options.map(value => {
+                const safe = window.Formatters.escapeHtml(value);
+                return `<option value="${safe}">${safe}</option>`;
+            }).join('');
+            optionMarkupCache.set(options, markup);
+        }
+        return markup;
+    }
+
+    // Select hanya berisi nilai terpilih; daftar lengkap diisi saat select difokus/diklik
+    // (fillOptionSelect). Ini menghindari puluhan ribu <option> saat tabel dirender.
     function renderBudgetOptionSelect(id, field, label, currentValue, options) {
         const current = String(currentValue || '').trim();
-        const values = [...options];
-        const matchingValue = values.find(value => normalizeFieldName(value) === normalizeFieldName(current));
-        if (current && !matchingValue) values.unshift(current);
-        const selected = matchingValue || current;
-        const optionMarkup = values.map(value => {
-            const safe = window.Formatters.escapeHtml(value);
-            return `<option value="${safe}" ${value === selected ? 'selected' : ''}>${safe}</option>`;
-        }).join('');
-        return `<select onchange="RekonsilModule.updateTransactionText('${window.Formatters.escapeHtml(id)}', '${field}', this.value)" class="form-select w-40 py-1 text-xs" aria-label="${label}">
+        const selected = (current && getOptionLookup(options).get(normalizeFieldName(current))) || current;
+        const safeSelected = window.Formatters.escapeHtml(selected);
+        return `<select data-option-field="${field}" onfocus="RekonsilModule.fillOptionSelect(this)" onmousedown="RekonsilModule.fillOptionSelect(this)" onchange="RekonsilModule.updateTransactionText('${window.Formatters.escapeHtml(id)}', '${field}', this.value)" class="form-select w-40 py-1 text-xs" aria-label="${label}">
             <option value="" ${selected ? '' : 'selected'}>Pilih ${label.toLowerCase()}...</option>
-            ${optionMarkup}
+            ${selected ? `<option value="${safeSelected}" selected>${safeSelected}</option>` : ''}
         </select>`;
+    }
+
+    function fillOptionSelect(select) {
+        if (!select || select.dataset.filled === '1') return;
+        const options = select.dataset.optionField === 'proyek_manual' ? budgetProjectOptions : budgetAccountOptions;
+        const selected = select.value;
+        const placeholder = select.options[0] ? select.options[0].outerHTML : '<option value=""></option>';
+        const extra = selected && !options.includes(selected)
+            ? `<option value="${window.Formatters.escapeHtml(selected)}">${window.Formatters.escapeHtml(selected)}</option>`
+            : '';
+        select.innerHTML = placeholder + extra + getOptionMarkup(options);
+        select.value = selected;
+        select.dataset.filled = '1';
     }
 
     function renderTransactions() {
@@ -511,8 +624,8 @@ window.RekonsilModule = (function() {
         tbody.innerHTML = visible.map(row => {
             const debit = toNumber(getTransactionField(row, ['debit', 'debet']));
             const credit = toNumber(getTransactionField(row, ['kredit', 'credit']));
-            const finance = getFinanceValue(row);
-            const reconcile = getReconcileValue(row);
+            const finance = row._finance;
+            const reconcile = row._reconcile;
             const variance = finance - reconcile;
             const defaultAccount = getTransactionField(row, ['_calcAkun', '_akunOverride', 'nama akun up', 'nama akun induk', 'nama akun', 'nama_akun', 'akun']) || '';
             const defaultProject = getTransactionField(row, ['_calcProyek', '_proyekOverride', 'nama proyek up', 'nama proyek', 'proyek', 'project']) || '';
@@ -540,8 +653,8 @@ window.RekonsilModule = (function() {
                 <td><input type="text" value="${escape(row.catatan_manual || '')}" onchange="RekonsilModule.updateTransactionNote('${escape(row.id)}', this.value)" placeholder="Catatan manual..." class="form-input w-32 py-1 text-xs" aria-label="Catatan manual"></td>
                 <td>
                     <button type="button" onclick="RekonsilModule.applyManualRowChange('${escape(row.id)}')" class="btn btn-secondary text-[10px] px-2 py-1 whitespace-nowrap">Tambah perubahan manual</button>
-                    <span class="mt-1 inline-flex items-center rounded-full px-1.5 py-0.5 text-[9px] font-bold ${hasTransactionChanges(row) ? 'bg-amber-500/20 text-amber-300' : 'bg-emerald-500/20 text-emerald-300'}">
-                        ${hasTransactionChanges(row) ? 'Sudah diubah' : 'Belum' }
+                    <span class="mt-1 inline-flex items-center rounded-full px-1.5 py-0.5 text-[9px] font-bold ${row._changed ? 'bg-amber-500/20 text-amber-300' : 'bg-emerald-500/20 text-emerald-300'}">
+                        ${row._changed ? 'Sudah diubah' : 'Belum' }
                     </span>
                 </td>
             </tr>`;
@@ -560,7 +673,7 @@ window.RekonsilModule = (function() {
 
     async function applyManualRowChange(id) {
         if (!window.SmartBaraCore.canWriteData()) return setStatus('Level akses Viewer hanya dapat membaca rekonsiliasi.', true);
-        const located = Object.entries(deptData).map(([dept, rows]) => ({ dept, row: rows.find(item => item.id === id) })).find(item => item.row);
+        const located = locateRow(id);
         if (!located) return;
         const accountValue = String(getTransactionField(located.row, ['nama_akun_manual', 'nama akun up', 'nama akun', 'nama_akun', 'akun']) || '').trim();
         const projectValue = String(getTransactionField(located.row, ['proyek_manual', 'nama proyek up', 'proyek', 'nama proyek']) || '').trim();
@@ -601,7 +714,7 @@ window.RekonsilModule = (function() {
 
     async function updateTransactionReconcile(id, value) {
         if (!window.SmartBaraCore.canWriteData()) return setStatus('Level akses Viewer hanya dapat membaca rekonsiliasi.', true);
-        const located = Object.entries(deptData).map(([dept, rows]) => ({ dept, row: rows.find(item => item.id === id) })).find(item => item.row);
+        const located = locateRow(id);
         if (!located) return;
         const oldValue = toNumber(located.row.adj_rekonsil);
         const newValue = toNumber(value) - getReconcileValue(located.row, false);
@@ -612,7 +725,7 @@ window.RekonsilModule = (function() {
 
     async function updateTransactionNote(id, value) {
         if (!window.SmartBaraCore.canWriteData()) return setStatus('Level akses Viewer hanya dapat membaca rekonsiliasi.', true);
-        const located = Object.entries(deptData).map(([dept, rows]) => ({ dept, row: rows.find(item => item.id === id) })).find(item => item.row);
+        const located = locateRow(id);
         if (!located) return;
         const oldValue = String(located.row.catatan_manual || '');
         const newValue = String(value || '').trim();
@@ -624,7 +737,7 @@ window.RekonsilModule = (function() {
     async function updateTransactionText(id, field, value) {
         if (!window.SmartBaraCore.canWriteData()) return setStatus('Level akses Viewer hanya dapat membaca rekonsiliasi.', true);
         if (!['nama_akun_manual', 'proyek_manual'].includes(field)) return;
-        const located = Object.entries(deptData).map(([dept, rows]) => ({ dept, row: rows.find(item => item.id === id) })).find(item => item.row);
+        const located = locateRow(id);
         if (!located) return;
         const oldValue = String(located.row[field] || '');
         const newValue = String(value || '').trim();
@@ -638,7 +751,7 @@ window.RekonsilModule = (function() {
             await window.SmartBaraConfig.ensureLibrary('sheetjs');
             const rows = filterTransactionRows(getTransactionTableData().rows).map(row => ({
                 'ID Transaksi': row.id,
-                Departemen: row.dept || dept,
+                Departemen: row.dept || '',
                 Tanggal: getTransactionField(row, ['tanggal', 'tgl']) || '',
                 'No Sumber': getTransactionField(row, ['no sumber', 'no_sumber', 'no']) || '',
                 Keterangan: getTransactionField(row, ['keterangan', 'deskripsi', 'uraian']) || '',
@@ -646,9 +759,9 @@ window.RekonsilModule = (function() {
                 'Nama Proyek': getTransactionField(row, ['proyek_manual', 'nama proyek up', 'nama proyek', 'proyek']) || '',
                 Debit: toNumber(getTransactionField(row, ['debit', 'debet'])),
                 Kredit: toNumber(getTransactionField(row, ['kredit', 'credit'])),
-                Finance: getFinanceValue(row),
-                'Rekonsil Manual': getReconcileValue(row),
-                Selisih: getFinanceValue(row) - getReconcileValue(row),
+                Finance: row._finance,
+                'Rekonsil Manual': row._reconcile,
+                Selisih: row._finance - row._reconcile,
                 'Catatan Manual': row.catatan_manual || ''
             }));
             const workbook = XLSX.utils.book_new();
@@ -673,7 +786,8 @@ window.RekonsilModule = (function() {
             const workbook = XLSX.read(await file.arrayBuffer(), { type: 'array' });
             const sheet = workbook.Sheets[workbook.SheetNames[0]];
             const imports = XLSX.utils.sheet_to_json(sheet, { defval: '' }).slice(0, 1000);
-            const rowById = new Map(Object.entries(deptData).flatMap(([dept, rows]) => withStableIds(rows, dept).map(row => [row.id, { dept, row }])));
+            // Pakai baris asli deptData (bukan salinan) agar perubahan import langsung terlihat di tabel.
+            const rowById = getRowIndex();
             const changedIds = new Set();
             const auditRows = [];
             let matched = 0;
@@ -1085,12 +1199,18 @@ window.RekonsilModule = (function() {
                 tables: {}
             };
 
+            // Tabel tambahan (budget creator, anggaran masa depan, aset, visibilitas dept) ikut disimpan
+            // agar backup memuat seluruh data periode; pemulihan otomatis saat ini memakai 6 tabel pertama.
             const tables = [
                 'smartbara_store',
                 'smartbara_meta',
                 'smartbara_budget',
                 'smartbara_budget_site',
-                'smartbara_history'
+                'smartbara_history',
+                'smartbara_budget_creator_planning',
+                'smartbara_future_budget',
+                'smartbara_asset',
+                'smartbara_dept_visibility'
             ];
 
             for (const tableName of tables) {
@@ -1138,6 +1258,116 @@ window.RekonsilModule = (function() {
             window.SmartBaraCore.showSyncStatus(`Gagal unduh backup: ${err.message}`, 'error');
         } finally {
             window.SmartBaraLayout?.endLoading(loadingTask, success);
+        }
+        return success;
+    }
+
+    // ============================================================================
+    // HAPUS SEMUA DATA REKONSIL (departemen yang sedang dipilih pada periode aktif)
+    // ============================================================================
+
+    async function deleteAllData() {
+        if (!window.SmartBaraCore.canDeleteData()) {
+            setStatus('Hapus semua data membutuhkan akun dengan akses hapus (Superadmin atau SPV).', true);
+            return;
+        }
+        const client = window.SmartBaraCore.getClient();
+        if (!client || !window.SmartBaraCore.canWriteCloud()) {
+            setStatus('Koneksi cloud dengan akses tulis diperlukan untuk menghapus data.', true);
+            return;
+        }
+
+        const period = window.SmartBaraCore.getActivePeriod();
+        const departments = Object.keys(deptData).filter(dept => (deptData[dept] || []).length).sort();
+        if (!departments.length) {
+            await window.SmartBaraLayout.alertDialog({ title: 'Tidak ada data', message: `Tidak ada transaksi rekonsil pada periode ${period} untuk departemen yang dipilih.`, confirmText: 'OK' });
+            return;
+        }
+        const transactionCount = departments.reduce((sum, dept) => sum + deptData[dept].length, 0);
+        const isCombined = window.SmartBaraCore.isCombinedDepartments();
+
+        const confirmed = await window.SmartBaraLayout.confirmDialog({
+            title: 'Hapus semua data rekonsil?',
+            message: `Hapus ${transactionCount.toLocaleString('id-ID')} transaksi pada periode ${period}?\n\nDepartemen: ${departments.join(', ')}\n\nIkut dihapus: koreksi manual per transaksi, serta penyesuaian & catatan departemen tersebut.${isCombined ? '' : '\nDepartemen lain yang tidak sedang dipilih tidak ikut dihapus.'}\nRiwayat audit tetap disimpan.\n\nFile backup periode akan diunduh otomatis lebih dulu.`,
+            confirmText: 'Ya, hapus semua',
+            cancelText: 'Tidak',
+            danger: true
+        });
+        if (!confirmed) return;
+
+        const backedUp = await downloadBackupPeriod();
+        if (!backedUp) {
+            setStatus('Hapus semua dibatalkan karena backup gagal diunduh.', true);
+            return;
+        }
+
+        const loadingTask = window.SmartBaraLayout.beginLoading('Menghapus data rekonsil', `Menghapus ${transactionCount.toLocaleString('id-ID')} transaksi ${departments.join(', ')}...`);
+        let success = false;
+        try {
+            const targetDepts = new Set(departments.map(dept => dept.toUpperCase()));
+            const transactionIds = new Set(departments.flatMap(dept => deptData[dept].map(row => String(row.id))));
+
+            // 1. Transaksi
+            await window.SmartBaraCore.deleteDepartmentStores(period, departments);
+
+            // 2. Koreksi manual per transaksi (smartbara_settings), termasuk sisa override dept tersebut
+            const prefix = getCloudOverridePrefix(period);
+            const { data: overrideRows, error: overrideReadError } = await client.from('smartbara_settings').select('key, value').like('key', `${prefix}%`);
+            if (overrideReadError) throw overrideReadError;
+            const overrideKeys = (overrideRows || []).filter(item => {
+                const transactionId = String(item.value?.transaction_id || item.key.slice(prefix.length));
+                return transactionIds.has(transactionId) || targetDepts.has(String(item.value?.department || '').toUpperCase());
+            }).map(item => item.key);
+            for (let offset = 0; offset < overrideKeys.length; offset += 200) {
+                const { error } = await client.from('smartbara_settings').delete().in('key', overrideKeys.slice(offset, offset + 200));
+                if (error) throw error;
+            }
+
+            // 3. Penyesuaian & catatan departemen (smartbara_meta)
+            const { data: metaRows, error: metaReadError } = await client.from('smartbara_meta').select('meta_key').eq('period_name', period);
+            if (metaReadError) throw metaReadError;
+            const metaKeys = (metaRows || []).map(row => row.meta_key).filter(key => targetDepts.has(String(key || '').toUpperCase()));
+            if (metaKeys.length) {
+                const { error } = await client.from('smartbara_meta').delete().eq('period_name', period).in('meta_key', metaKeys);
+                if (error) throw error;
+            }
+
+            // Bersihkan cache lokal
+            overrideKeys.forEach(key => delete transactionOverrides[key.slice(prefix.length)]);
+            transactionIds.forEach(id => delete transactionOverrides[id]);
+            saveLocalOverrides(period);
+            Object.keys(metaData).forEach(key => { if (targetDepts.has(String(key).toUpperCase())) delete metaData[key]; });
+            localStorage.setItem(`smartbara_meta_${period}`, JSON.stringify(metaData));
+
+            // Catat di riwayat audit
+            const auditEntry = withHistoryTimestamp({
+                period_name: period,
+                action: 'HAPUS_SEMUA_REKONSIL',
+                table_name: 'smartbara_store',
+                record_id: 'rekonsil-hapus-semua',
+                old_value: { jumlah_transaksi: transactionCount, departemen: departments.join(', ') },
+                new_value: { jumlah_transaksi: 0, departemen: '(dihapus)' },
+                user_email: window.SmartBaraCore.getUser()?.email || 'admin'
+            });
+            try {
+                await saveHistoryToCloud(client, auditEntry);
+            } catch (error) {
+                console.warn('Audit hapus semua gagal disimpan:', error);
+            }
+            historyLogs.unshift(auditEntry);
+
+            await window.SmartBaraCore.loadPeriodStore(period, true, { showOverlay: false });
+            await loadData(true);
+            success = true;
+            setStatus(`${transactionCount.toLocaleString('id-ID')} transaksi (${departments.join(', ')}) dihapus. Backup sudah diunduh.`);
+            window.SmartBaraCore.showSyncStatus(`Data rekonsil ${departments.join(', ')} periode ${period} berhasil dihapus.`, 'success');
+        } catch (error) {
+            console.error('Delete all rekonsil error:', error);
+            setStatus(`Gagal menghapus semua data: ${error.message}. Gunakan file backup yang sudah diunduh bila perlu memulihkan.`, true);
+            window.SmartBaraCore.showSyncStatus(`Gagal menghapus data rekonsil: ${error.message}`, 'error');
+            await window.SmartBaraCore.loadPeriodStore(period, true, { showOverlay: false });
+        } finally {
+            window.SmartBaraLayout.endLoading(loadingTask, success);
         }
     }
 
@@ -1414,8 +1644,8 @@ window.RekonsilModule = (function() {
         const separator = recordId.indexOf(':');
         if (separator <= 0) return null;
         const department = recordId.slice(0, separator).toUpperCase();
-        const transactionId = recordId.slice(separator + 1);
-        return (deptData[department] || []).find(item => String(item.id || '') === transactionId) || null;
+        const located = locateRow(recordId.slice(separator + 1));
+        return located && String(located.dept).toUpperCase() === department ? located.row : null;
     }
 
     function getHistoryDetail(log, transactionRow = getHistoryTransactionRow(log)) {
@@ -1434,7 +1664,7 @@ window.RekonsilModule = (function() {
         };
         const formatValue = (value, field) => {
             if (value === undefined || value === null || String(value).trim() === '') return '(kosong)';
-            if (field.startsWith('adj_')) return window.Formatters.formatRupiah(parseNumber(value));
+            if (field.startsWith('adj_')) return window.Formatters.formatRupiah(window.Formatters.parseNumber(value, 0));
             return String(value);
         };
         return Object.keys(newValue).map(field => {
@@ -1524,7 +1754,8 @@ window.RekonsilModule = (function() {
         let transactionRow = null;
 
         if (target.type === 'transaction') {
-            transactionRow = (deptData[target.department] || []).find(row => row.id === target.transactionId);
+            const located = locateRow(target.transactionId);
+            transactionRow = located && String(located.dept).toUpperCase() === target.department ? located.row : null;
             if (!transactionRow) return setStatus('Transaksi riwayat tidak ditemukan pada data periode aktif.', true);
             target.fields.forEach((field) => {
                 const currentValue = transactionRow[field] ?? (field.startsWith('adj_') ? 0 : '');
@@ -1701,5 +1932,5 @@ window.RekonsilModule = (function() {
         }
     }
 
-    return { init, updateAdjustment, renderTransactions, scheduleTransactionSearch, setTransactionFilter, setTransactionMonthFilter, setHistoryFilter, toggleFullTableView, restoreHistoryChange, loadMoreTransactions, loadMoreHistory, updateTransactionReconcile, updateTransactionNote, updateTransactionText, exportToExcel, importChanges, pullChangesFromPeriod, syncToCloudManual, downloadBackupPeriod, uploadBackupPeriod };
+    return { init, updateAdjustment, renderTransactions, scheduleTransactionSearch, setTransactionFilter, setTransactionMonthFilter, setHistoryFilter, toggleFullTableView, restoreHistoryChange, loadMoreTransactions, loadMoreHistory, updateTransactionReconcile, updateTransactionNote, updateTransactionText, exportToExcel, importChanges, pullChangesFromPeriod, syncToCloudManual, downloadBackupPeriod, uploadBackupPeriod, deleteAllData, fillOptionSelect, applyManualRowChange };
 })();

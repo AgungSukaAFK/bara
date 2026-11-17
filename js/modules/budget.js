@@ -5,8 +5,24 @@
 window.BudgetModule = (function() {
     let budgetType = 'account'; // 'account' or 'site'
     let items = [];
+    let searchTimer = null;
     const promptedCachePeriods = new Set();
     const MONTH_KEYS = ['jan', 'feb', 'mar', 'apr', 'mei', 'jun', 'jul', 'agu', 'sep', 'okt', 'nov', 'des'];
+    const MONTH_NAMES = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+    const DEFAULT_DEPARTMENTS = ['GA', 'HR', 'HSE', 'IT', 'LEGAL', 'FINANCE', 'LOGISTIK', 'OPERASIONAL', 'PRODUKSI', 'SHE', 'UMUM'];
+    const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+    function getTableName() {
+        return budgetType === 'site' ? 'smartbara_budget_site' : 'smartbara_budget';
+    }
+
+    function getStorageKey(period = window.SmartBaraCore.getActivePeriod()) {
+        return budgetType === 'site' ? `smartbara_budget_site_v2_${period}` : `smartbara_budget_v2_${period}`;
+    }
+
+    function getBudgetTotal(item) {
+        return (Array.isArray(item.budget) ? item.budget : []).reduce((sum, value) => sum + Number(value || 0), 0);
+    }
 
     function normalizeBudgetItem(item) {
         const budget = Array.isArray(item.budget)
@@ -215,67 +231,107 @@ window.BudgetModule = (function() {
         }
     }
 
-    function renderTable() {
-        const tbody = document.getElementById('budgetTableBody');
-        const countEl = document.getElementById('budgetStatCount');
-        const totalEl = document.getElementById('budgetStatTotal');
+    // Baris yang sedang tampil: mengikuti filter departemen global dan kotak pencarian.
+    function getFilteredItems() {
         const search = (document.getElementById('budgetSearch')?.value || '').toLowerCase().trim();
         const deptFilter = document.getElementById('budgetDeptFilter')?.value || '';
         const selectedDepts = new Set(window.SmartBaraCore.getSelectedDepartments().map(dept => String(dept).toUpperCase()));
         const filterByGlobalDept = !window.SmartBaraCore.isCombinedDepartments();
 
-        const filtered = items.filter(it => {
+        return items.filter(it => {
             if (filterByGlobalDept && !selectedDepts.has(String(it.dept || '').toUpperCase())) return false;
             if (deptFilter && it.dept !== deptFilter) return false;
             if (!search) return true;
             return [it.nama, it.dept].some(v => String(v || '').toLowerCase().includes(search));
         });
+    }
+
+    function scheduleRender() {
+        window.clearTimeout(searchTimer);
+        searchTimer = window.setTimeout(renderTable, 150);
+    }
+
+    function renderTable() {
+        const tbody = document.getElementById('budgetTableBody');
+        const tfoot = document.getElementById('budgetTableFoot');
+        const countEl = document.getElementById('budgetStatCount');
+        const totalEl = document.getElementById('budgetStatTotal');
+        const filtered = getFilteredItems();
+        const escape = window.Formatters.escapeHtml;
 
         let grandTotal = 0;
         const monthTotals = new Array(12).fill(0);
 
-        filtered.forEach(it => {
-            const bArr = Array.isArray(it.budget) ? it.budget : [];
+        const rowsHtml = filtered.map(item => {
+            const bArr = Array.isArray(item.budget) ? item.budget : [];
+            let rowTotal = 0;
+            let monthsHtml = '';
             for (let m = 0; m < 12; m++) {
                 const val = Number(bArr[m] || 0);
                 monthTotals[m] += val;
-                grandTotal += val;
+                rowTotal += val;
+                monthsHtml += `<td class="text-right text-slate-300 font-mono">${window.Formatters.formatNumber(val)}</td>`;
             }
-        });
+            grandTotal += rowTotal;
+            const safeId = escape(String(item.id || ''));
+            return `<tr class="hover:bg-white/[0.03]">
+                    <td class="font-extrabold text-white whitespace-nowrap">${escape(item.nama)}</td>
+                    <td class="text-slate-400 font-semibold">${escape(item.dept)}</td>
+                    ${monthsHtml}
+                    <td class="text-right font-black text-teal-400">${window.Formatters.formatRupiah(rowTotal)}</td>
+                    <td class="text-right whitespace-nowrap">
+                        <button type="button" onclick="BudgetModule.openForm('${safeId}')" class="text-teal-400 hover:text-teal-300 font-bold text-xs mr-2">Edit</button>
+                        <button type="button" onclick="BudgetModule.deleteItem('${safeId}')" class="text-rose-400 hover:text-rose-300 font-bold text-xs">Hapus</button>
+                    </td>
+                </tr>`;
+        }).join('');
 
         if (countEl) countEl.textContent = filtered.length.toLocaleString('id-ID');
         if (totalEl) totalEl.textContent = window.Formatters.formatRupiah(grandTotal);
 
+        if (tfoot) {
+            tfoot.innerHTML = filtered.length
+                ? `<tr class="bg-slate-900/90 font-black">
+                        <td class="text-white">Total</td>
+                        <td class="text-slate-400">${filtered.length.toLocaleString('id-ID')} baris</td>
+                        ${monthTotals.map(value => `<td class="text-right font-mono text-slate-200">${window.Formatters.formatNumber(value)}</td>`).join('')}
+                        <td class="text-right text-teal-300">${window.Formatters.formatRupiah(grandTotal)}</td>
+                        <td></td>
+                    </tr>`
+                : '';
+        }
+
         if (!tbody) return;
 
         if (!filtered.length) {
+            const isFiltered = items.length > 0;
             tbody.innerHTML = `
                 <tr>
-                    <td colspan="15" class="text-center py-12 text-slate-500 font-medium">
-                        Belum ada anggaran ${budgetType === 'site' ? 'Proyek Site' : 'Akun'}. Klik <strong>+ Tambah Anggaran</strong>.
+                    <td colspan="16" class="text-center py-12 text-slate-500 font-medium">
+                        ${isFiltered
+                            ? 'Tidak ada anggaran yang cocok dengan filter departemen atau pencarian.'
+                            : `Belum ada anggaran ${budgetType === 'site' ? 'Proyek Site' : 'Akun'}. Klik <strong>+ Tambah Anggaran</strong>.`}
                     </td>
                 </tr>
             `;
             return;
         }
 
-        tbody.innerHTML = filtered.map((item, idx) => {
-            const bArr = Array.isArray(item.budget) ? item.budget : [];
-            const rowTotal = bArr.reduce((s, v) => s + Number(v || 0), 0);
-            const monthsHtml = bArr.slice(0, 12).map(v => `<td class="text-right text-slate-300 font-mono">${window.Formatters.formatNumber(v || 0)}</td>`).join('');
+        tbody.innerHTML = rowsHtml;
+    }
 
-            return `
-                <tr class="hover:bg-white/[0.03]">
-                    <td class="font-extrabold text-white whitespace-nowrap">${window.Formatters.escapeHtml(item.nama)}</td>
-                    <td class="text-slate-400 font-semibold">${window.Formatters.escapeHtml(item.dept)}</td>
-                    ${monthsHtml}
-                    <td class="text-right font-black text-teal-400">${window.Formatters.formatRupiah(rowTotal)}</td>
-                    <td class="text-right whitespace-nowrap">
-                        <button type="button" onclick="BudgetModule.openForm('${item.id}')" class="text-teal-400 hover:text-teal-300 font-bold text-xs mr-2">Edit</button>
-                        <button type="button" onclick="BudgetModule.deleteItem('${item.id}')" class="text-rose-400 hover:text-rose-300 font-bold text-xs">Hapus</button>
-                    </td>
-                </tr>
-            `;
+    // Opsi departemen form dibangun dari data yang ada agar baris dept lain (mis. HSE/LEGAL/UMUM)
+    // tidak berpindah ke opsi pertama saat diedit.
+    function populateDeptOptions(currentDept = '') {
+        const select = document.getElementById('formBudgetDept');
+        if (!select) return;
+        const departments = new Set(DEFAULT_DEPARTMENTS);
+        (window.SmartBaraCore.getDepartments?.() || []).forEach(dept => departments.add(String(dept).toUpperCase()));
+        items.forEach(item => { if (item.dept) departments.add(String(item.dept).toUpperCase()); });
+        if (currentDept) departments.add(String(currentDept).toUpperCase());
+        select.innerHTML = [...departments].sort().map(dept => {
+            const safe = window.Formatters.escapeHtml(dept);
+            return `<option value="${safe}">${safe}</option>`;
         }).join('');
     }
 
@@ -284,9 +340,14 @@ window.BudgetModule = (function() {
         const modal = document.getElementById('budgetFormModal');
         if (!modal) return;
 
+        const selectedDepts = window.SmartBaraCore.getSelectedDepartments();
+        const defaultDept = !window.SmartBaraCore.isCombinedDepartments() && selectedDepts.length === 1 ? selectedDepts[0] : 'HR';
+        const dept = String(item?.dept || defaultDept).toUpperCase();
+        populateDeptOptions(dept);
+
         document.getElementById('formBudgetId').value = item?.id || '';
         document.getElementById('formBudgetName').value = item?.nama || '';
-        document.getElementById('formBudgetDept').value = item?.dept || 'HR';
+        document.getElementById('formBudgetDept').value = dept;
 
         const bArr = Array.isArray(item?.budget) ? item.budget : [];
         for (let i = 1; i <= 12; i++) {
@@ -394,55 +455,64 @@ window.BudgetModule = (function() {
             window.SmartBaraCore.showSyncStatus('Level akses akun ini tidak dapat menghapus anggaran.', 'error');
             return;
         }
-        if (!items.length) {
-            await window.SmartBaraLayout.alertDialog({ title: 'Tidak ada data', message: 'Tidak ada budget untuk dihapus pada periode ini.', confirmText: 'OK' });
+        const targets = getFilteredItems();
+        if (!targets.length) {
+            await window.SmartBaraLayout.alertDialog({ title: 'Tidak ada data', message: 'Tidak ada budget yang tampil untuk dihapus pada periode ini.', confirmText: 'OK' });
+            return;
+        }
+        if (!window.SmartBaraCore.getClient()) {
+            await window.SmartBaraLayout.alertDialog({ title: 'Cloud tidak terhubung', message: 'Hapus semua budget membutuhkan koneksi Supabase.', confirmText: 'OK' });
             return;
         }
         const period = window.SmartBaraCore.getActivePeriod();
-        const tableName = budgetType === 'site' ? 'smartbara_budget_site' : 'smartbara_budget';
-        const storageKey = budgetType === 'site' ? `smartbara_budget_site_v2_${period}` : `smartbara_budget_v2_${period}`;
+        const tableName = getTableName();
+        const storageKey = getStorageKey(period);
+        const label = budgetType === 'site' ? 'Budget Site Proyek' : 'Budget Plan Akun';
+        const isSubset = targets.length < items.length;
+        const departments = [...new Set(targets.map(item => String(item.dept || 'UMUM').toUpperCase()))].sort();
+        const total = targets.reduce((sum, item) => sum + getBudgetTotal(item), 0);
+
         const confirmed = await window.SmartBaraLayout.confirmDialog({
-            title: 'Hapus semua budget',
-            message: `Hapus semua ${items.length} baris budget pada periode ${period}? Tindakan ini tidak dapat dibatalkan.`,
-            confirmText: 'Hapus Semua',
-            cancelText: 'Batal',
+            title: `Hapus semua ${label}?`,
+            message: `${isSubset
+                ? `Hapus ${targets.length.toLocaleString('id-ID')} dari ${items.length.toLocaleString('id-ID')} baris yang sedang tampil (sesuai filter departemen/pencarian)`
+                : `Hapus SEMUA ${targets.length.toLocaleString('id-ID')} baris`} pada periode ${period}?\n\nDepartemen: ${departments.join(', ')}\nTotal plafon: ${window.Formatters.formatRupiah(total)}\n\nFile Excel backup baris ini akan diunduh otomatis lebih dulu dan bisa diunggah ulang lewat Unggah Template.`,
+            confirmText: 'Ya, hapus semua',
+            cancelText: 'Tidak',
             danger: true
         });
         if (!confirmed) return;
 
-        const rowsToDelete = [...items];
-        const deletedIds = new Set();
-        let queuedCount = 0;
-        const errors = [];
-        const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-        for (const item of rowsToDelete) {
-            if (!uuidPattern.test(String(item.id || ''))) {
-                deletedIds.add(item.id);
-                continue;
-            }
-            try {
-                await window.SmartBaraCore.deleteVersionedRow(tableName, period, { id: item.id, period_name: period }, `budget:${item.id}`, 'Budget');
-                deletedIds.add(item.id);
-            } catch (error) {
-                if (error.queuedForSync) {
-                    deletedIds.add(item.id);
-                    queuedCount++;
-                } else {
-                    errors.push(error.message || String(error));
-                }
-            }
-        }
+        const loadingTask = window.SmartBaraLayout.beginLoading('Menghapus budget', `Mengunduh backup lalu menghapus ${targets.length} baris...`);
+        let success = false;
+        try {
+            await downloadRowsBackup(targets, period, label);
+            const cloudIds = targets.map(item => String(item.id || '')).filter(id => UUID_PATTERN.test(id));
+            await window.SmartBaraCore.deletePeriodRowsByIds(tableName, period, cloudIds, 'budget:');
 
-        items = rowsToDelete.filter(item => !deletedIds.has(item.id));
-        localStorage.setItem(storageKey, JSON.stringify(items));
-        renderTable();
-        if (errors.length) {
-            window.SmartBaraCore.showSyncStatus(`${errors.length} budget gagal dihapus dari cloud: ${errors[0]}`, 'error');
-        } else if (queuedCount) {
-            window.SmartBaraCore.showSyncStatus(`${deletedIds.size} budget dihapus; ${queuedCount} menunggu sinkronisasi cloud.`, 'info');
-        } else {
-            window.SmartBaraCore.showSyncStatus('Semua budget berhasil dihapus dari cloud.', 'success');
+            const deletedIds = new Set(targets.map(item => item.id));
+            items = items.filter(item => !deletedIds.has(item.id));
+            localStorage.setItem(storageKey, JSON.stringify(items));
+            renderTable();
+            setStatus(`${targets.length} baris budget dihapus; backup Excel sudah diunduh.`);
+            window.SmartBaraCore.showSyncStatus(`${targets.length} baris ${label} berhasil dihapus dari cloud.`, 'success');
+            success = true;
+        } catch (error) {
+            console.error('Delete all budget error:', error);
+            setStatus(`Hapus semua dibatalkan/gagal: ${error.message}`, true);
+            window.SmartBaraCore.showSyncStatus(`Gagal menghapus budget: ${error.message}`, 'error');
+        } finally {
+            window.SmartBaraLayout.endLoading(loadingTask, success);
         }
+    }
+
+    async function downloadRowsBackup(rows, period, label) {
+        await window.SmartBaraConfig.ensureLibrary('sheetjs');
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(rows.map(toTemplateRow)), 'Template Budget');
+        const safePeriod = String(period).replace(/[^a-z0-9\-_]/gi, '_');
+        const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+        XLSX.writeFile(workbook, `Backup_${label.replace(/\s+/g, '_')}_${safePeriod}_${stamp}.xlsx`);
     }
 
     // ============================================================================
@@ -453,8 +523,7 @@ window.BudgetModule = (function() {
         // Baris cloud memakai nama_akun/nama_proyek_up/departemen, bukan nama/dept.
         const item = normalizeBudgetItem(rawItem);
         const row = { 'Departemen': item.dept, 'Nama Akun / Proyek': item.nama };
-        const monthNames = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
-        monthNames.forEach((month, index) => {
+        MONTH_NAMES.forEach((month, index) => {
             row[month] = Number(item.budget[index] || 0);
         });
         row['Total'] = item.budget.reduce((sum, value) => sum + Number(value || 0), 0);
@@ -615,5 +684,5 @@ window.BudgetModule = (function() {
         }
     }
 
-    return { init, renderTable, openForm, closeForm, saveForm, deleteItem, deleteAll, copyFromPeriod, downloadBudgetTemplate, uploadBudgetTemplate };
+    return { init, renderTable, scheduleRender, openForm, closeForm, saveForm, deleteItem, deleteAll, copyFromPeriod, downloadBudgetTemplate, uploadBudgetTemplate };
 })();

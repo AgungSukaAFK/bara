@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Budget Plan Akun - Smart BARA 7.10 HZ</title>
-    <link rel="stylesheet" href="css/app.css?v=20261102-smooth-loading">
+    <link rel="stylesheet" href="css/app.css?v=20261117-hapus-semua">
     <link rel="stylesheet" href="css/themes.css?v=20261106-themes">
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="js/theme.js?v=20261106-themes"></script>
@@ -33,7 +33,7 @@
                     <select id="budgetCopySourcePeriod" class="form-select text-xs" aria-label="Periode sumber budget"></select>
                     <button type="button" onclick="BudgetModule.copyFromPeriod()" class="btn btn-secondary text-xs">Tarik Budget Periode</button>
                     <button type="button" onclick="BudgetModule.openForm()" class="btn btn-primary">+ Tambah Anggaran Akun</button>
-                    <button type="button" onclick="BudgetModule.deleteAll()" class="btn btn-danger text-xs">Hapus Semua Budget</button>
+                    <button type="button" onclick="BudgetModule.deleteAll()" class="btn btn-danger text-xs">Hapus Semua</button>
                 </div>
             </div>
 
@@ -52,7 +52,7 @@
             <!-- Table Container -->
             <div class="glass-panel rounded-xl border border-white/10 overflow-hidden shadow-2xl">
                 <div class="p-4 border-b border-white/10 flex flex-wrap items-center justify-between gap-3">
-                    <input type="search" id="budgetSearch" oninput="BudgetModule.renderTable()" placeholder="Cari nama akun atau departemen..." class="form-input flex-1 min-w-[200px]">
+                    <input type="search" id="budgetSearch" oninput="BudgetModule.scheduleRender()" placeholder="Cari nama akun atau departemen..." class="form-input flex-1 min-w-[200px]">
                     <span id="budgetStatusText" class="text-xs text-slate-400 font-semibold ml-auto"></span>
                 </div>
                 <div class="overflow-x-auto max-h-[60vh]">
@@ -79,6 +79,7 @@
                         </thead>
                         <tbody id="budgetTableBody" class="divide-y divide-white/5">
                         </tbody>
+                        <tfoot id="budgetTableFoot" class="sticky bottom-0 border-t border-white/10"></tfoot>
                     </table>
                 </div>
             </div>
@@ -137,10 +138,10 @@
     <!-- Scripts -->
     <script src="js/config.js?v=20261105-goa"></script>
     <script src="js/utils/formatters.js?v=upload-safety-1"></script>
-    <script src="js/core.js?v=20261106-safe-cloud-write"></script>
+    <script src="js/core.js?v=20261117-hapus-semua"></script>
     <script src="js/modules/upload.js?v=20261106-budget-template-upload"></script>
     <script src="js/layout.js?v=20261106-themes"></script>
-    <script src="js/modules/budget.js?v=20261106-budget-template-upload"></script>
+    <script src="js/modules/budget.js?v=20261117-hapus-semua"></script>
     <script>
         document.addEventListener('DOMContentLoaded', async () => {
             await window.SmartBaraCore.init();
