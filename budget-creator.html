@@ -76,7 +76,7 @@
 
             <!-- Filter & Search Bar -->
             <div class="glass-panel rounded-xl p-4 border border-white/10 flex flex-wrap items-center gap-3">
-                <input type="search" id="creatorSearch" oninput="BudgetCreatorModule.renderTable()" placeholder="Cari barang, akun, proyek, atau ID AI..." class="form-input flex-1 min-w-[200px]">
+                <input type="search" id="creatorSearch" oninput="BudgetCreatorModule.scheduleRender()" placeholder="Cari barang, akun, proyek, atau ID AI..." class="form-input flex-1 min-w-[200px]">
                 <select id="creatorDeptFilter" onchange="BudgetCreatorModule.renderTable()" class="form-select w-44">
                     <option value="">Semua Departemen</option>
                 </select>
@@ -258,6 +258,49 @@
         </section>
     </div>
 
+    <!-- Modal Tinjau Import Excel -->
+    <div id="creatorImportModal" class="modal-overlay fixed inset-0 z-[9100] hidden items-center justify-center p-4 opacity-0 transition-all duration-200">
+        <section class="glass-panel flex max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-white/20 shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="creatorImportTitle">
+            <header class="flex items-start justify-between gap-4 border-b border-white/10 bg-slate-900 px-5 py-4">
+                <div class="min-w-0">
+                    <span class="text-[10px] font-black uppercase text-teal-300">Import Excel</span>
+                    <h3 id="creatorImportTitle" class="m-0 mt-1 text-base font-black text-white">Tinjau sebelum disimpan</h3>
+                    <p id="creatorImportFileName" class="m-0 mt-0.5 truncate text-[11px] text-slate-400"></p>
+                </div>
+                <button type="button" onclick="BudgetCreatorModule.closeImportReview()" class="text-xl text-slate-400 hover:text-white" aria-label="Tutup">&times;</button>
+            </header>
+            <div class="space-y-3 border-b border-white/10 p-4">
+                <div id="creatorImportSummary" class="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6"></div>
+                <div class="flex flex-wrap items-center gap-4 text-xs text-slate-300">
+                    <label class="flex cursor-pointer items-center gap-2">
+                        <input id="creatorImportSkipDuplicates" type="checkbox" class="h-4 w-4 accent-teal-400" checked>
+                        Lewati baris yang sama persis dengan data di database (mencegah data dobel saat upload ulang)
+                    </label>
+                    <label class="ml-auto flex items-center gap-2">Tampilkan
+                        <select id="creatorImportIssueFilter" class="form-select w-44 text-xs">
+                            <option value="issues">Baris bermasalah</option>
+                            <option value="errors">Hanya error</option>
+                            <option value="all">Semua baris</option>
+                        </select>
+                    </label>
+                </div>
+                <p class="m-0 text-[11px] text-slate-500">Baris error tidak disimpan. Baris "Cek" tetap disimpan &mdash; perbaiki di Excel lalu upload ulang bila perlu. Data disimpan bertahap per 250 baris; jika koneksi putus, baris yang sudah masuk tetap aman dan sisanya masuk antrean sinkronisasi.</p>
+            </div>
+            <div class="min-h-0 flex-1 overflow-auto">
+                <table class="app-table min-w-[1100px]">
+                    <thead class="sticky top-0 z-10 bg-slate-900">
+                        <tr><th class="w-16 text-center">Baris</th><th class="w-20 text-center">Status</th><th>Departemen</th><th>Nama Akun</th><th>Proyek UP</th><th>Kebutuhan</th><th>Tgl Dibutuhkan</th><th class="text-right">Estimasi Total</th><th>Catatan Validasi</th></tr>
+                    </thead>
+                    <tbody id="creatorImportReviewBody" class="divide-y divide-white/5"></tbody>
+                </table>
+            </div>
+            <footer class="flex justify-end gap-2 border-t border-white/10 bg-slate-950/30 p-4">
+                <button type="button" onclick="BudgetCreatorModule.closeImportReview()" class="btn btn-secondary text-xs">Batal</button>
+                <button id="creatorImportConfirmButton" type="button" onclick="BudgetCreatorModule.confirmImport()" class="btn btn-primary text-xs">Simpan</button>
+            </footer>
+        </section>
+    </div>
+
     <!-- Modal Form (Tambah / Edit Kebutuhan) -->
     <div id="creatorFormModal" class="modal-overlay fixed inset-0 z-50 flex items-center justify-center p-4 hidden opacity-0 transition-all duration-200" onclick="if(event.target===this) BudgetCreatorModule.closeForm()">
         <div class="glass-panel w-full max-w-2xl rounded-2xl border border-white/20 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
@@ -343,7 +386,7 @@
     <script src="js/modules/upload.js?v=20261106-budget-template-upload"></script>
     <script src="js/layout.js?v=20261106-themes"></script>
     <script src="js/modules/ai-settings.js"></script>
-    <script src="js/modules/budget-creator.js?v=20261102-budget-creator-group-delete"></script>
+    <script src="js/modules/budget-creator.js?v=20261117-bulk-import"></script>
     <script>
         document.addEventListener('DOMContentLoaded', async () => {
             await window.SmartBaraCore.init();

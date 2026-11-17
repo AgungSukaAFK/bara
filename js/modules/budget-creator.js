@@ -5,7 +5,6 @@
 window.BudgetCreatorModule = (function() {
     let items = [];
     const expandedAccountGroups = new Set();
-    let dimensions = [];
     let storageMode = 'table'; // 'table' or 'settings'
     let aiDraftRows = [];
     let aiChatMessages = [];
@@ -14,6 +13,242 @@ window.BudgetCreatorModule = (function() {
     let manualProjectOptions = [];
     let referenceAccountOptions = [];
     let referenceProjectOptions = [];
+    let pendingImport = null;
+    let bulkOperationInProgress = false;
+    let reloadAfterBulk = false;
+    let reloadTimer = null;
+    let renderTimer = null;
+
+    const TABLE_NAME = 'smartbara_budget_creator_planning';
+    const BULK_CHUNK_SIZE = 250;
+    const MAX_IMPORT_ROWS = 10000;
+    const TEMPLATE_LAST_ROW = 503; // 500 baris isian setelah 3 baris judul/header
+    const PRIORITIES = ['Tinggi', 'Normal', 'Rendah'];
+    const STATUSES = ['Draft', 'Diajukan', 'Disetujui', 'Ditolak'];
+    const FINAL_STATUSES = ['Disetujui', 'Ditolak'];
+
+    function getCacheKey(period = window.SmartBaraCore.getActivePeriod()) {
+        return `budget_creator_planning_${period}`;
+    }
+
+    function persistLocal(period = window.SmartBaraCore.getActivePeriod(), list = items) {
+        try {
+            localStorage.setItem(getCacheKey(period), JSON.stringify(list));
+        } catch(error) {
+            console.warn('Cache lokal Budget Creator penuh/tidak tersedia:', error);
+        }
+    }
+
+    function normalizeKey(value) {
+        return String(value ?? '').trim().toLocaleLowerCase('id-ID').replace(/\s+/g, ' ');
+    }
+
+    function getRowTotal(row) {
+        return (Number(row.quantity) || 0) * (Number(row.estimated_unit_price) || 0);
+    }
+
+    function getRowFingerprint(row) {
+        return [
+            normalizeKey(row.department), normalizeKey(row.account_name), normalizeKey(row.project_name),
+            normalizeKey(row.item_name), normalizeKey(row.specification), String(row.needed_by || '').slice(0, 10),
+            Number(row.quantity) || 0, Math.round((Number(row.estimated_unit_price) || 0) * 100)
+        ].join('|');
+    }
+
+    // Bulk upsert supabase-js mengisi kolom yang tidak dikirim dengan NULL, jadi setiap
+    // baris harus membawa seluruh kolom dengan nilai default yang sah.
+    function toCloudRow(row, period) {
+        const now = new Date().toISOString();
+        return {
+            id: row.id || crypto.randomUUID(),
+            period_name: period,
+            department: String(row.department || '').trim(),
+            account_name: String(row.account_name || '').trim(),
+            project_name: String(row.project_name || '').trim(),
+            item_name: String(row.item_name || '').trim(),
+            specification: String(row.specification || '').trim(),
+            catatan: String(row.catatan || '').trim(),
+            ai_budget_id: row.ai_budget_id || null,
+            quantity: Number(row.quantity) || 1,
+            unit: String(row.unit || 'unit').trim() || 'unit',
+            estimated_unit_price: Number(row.estimated_unit_price) || 0,
+            priority: PRIORITIES.includes(row.priority) ? row.priority : 'Normal',
+            needed_by: row.needed_by || null,
+            status: STATUSES.includes(row.status) ? row.status : 'Draft',
+            created_by: row.created_by || null,
+            created_at: row.created_at || now,
+            updated_at: now
+        };
+    }
+
+    function isRetryableError(error) {
+        return Boolean(!navigator.onLine || error instanceof TypeError
+            || /network|fetch|timeout|temporar|offline|connection|gateway|\b50[234]\b/i.test(error?.message || ''));
+    }
+
+    function wait(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    function mergeIntoItems(rows) {
+        if (!rows.length) return;
+        const incomingIds = new Set(rows.map(row => String(row.id)));
+        items = [...rows, ...items.filter(item => !incomingIds.has(String(item.id)))];
+    }
+
+    function scheduleReload() {
+        if (bulkOperationInProgress) {
+            reloadAfterBulk = true;
+            return;
+        }
+        clearTimeout(reloadTimer);
+        reloadTimer = setTimeout(() => loadData(true), 700);
+    }
+
+    function scheduleRender() {
+        clearTimeout(renderTimer);
+        renderTimer = setTimeout(renderTable, 180);
+    }
+
+    /**
+     * Simpan banyak baris sekaligus (upsert per chunk, idempoten karena memakai id).
+     * Chunk yang gagal karena jaringan dicoba ulang; jika tetap gagal, sisa baris masuk
+     * antrean sinkronisasi core. Error non-jaringan menghentikan proses tanpa kehilangan
+     * informasi baris mana yang sudah tersimpan.
+     */
+    async function bulkUpsertRows(rows, { label = 'Budget Creator', onProgress } = {}) {
+        const client = window.SmartBaraCore.getClient();
+        const period = window.SmartBaraCore.getActivePeriod();
+        const result = { saved: [], queued: [], failed: [], error: null };
+        const cloudRows = rows.map(row => toCloudRow(row, period));
+        const batchKey = crypto.randomUUID();
+
+        for (let offset = 0; offset < cloudRows.length; offset += BULK_CHUNK_SIZE) {
+            const chunk = cloudRows.slice(offset, offset + BULK_CHUNK_SIZE);
+            let lastError = null;
+            let data = null;
+            for (let attempt = 1; attempt <= 3; attempt++) {
+                const response = await client.from(TABLE_NAME).upsert(chunk, { onConflict: 'id' }).select('id, updated_at');
+                if (!response.error) {
+                    data = response.data || [];
+                    lastError = null;
+                    break;
+                }
+                lastError = response.error;
+                if (!isRetryableError(lastError) || attempt === 3) break;
+                await wait(700 * attempt);
+            }
+
+            if (lastError) {
+                const remaining = cloudRows.slice(offset);
+                if (isRetryableError(lastError)) {
+                    try {
+                        await window.SmartBaraCore.syncCloudUpsert(TABLE_NAME, remaining, 'id', `budgetCreator:bulk:${batchKey}`, label);
+                        result.saved.push(...remaining);
+                    } catch(queueError) {
+                        if (queueError.queuedForSync) result.queued.push(...remaining);
+                        else result.failed.push(...remaining);
+                        result.error = queueError;
+                    }
+                } else {
+                    result.failed.push(...remaining);
+                    result.error = lastError;
+                }
+                onProgress?.(result.saved.length, cloudRows.length);
+                return result;
+            }
+
+            const versions = new Map(data.map(entry => [String(entry.id), entry.updated_at]));
+            chunk.forEach(row => {
+                const updatedAt = versions.get(String(row.id)) || row.updated_at;
+                const savedRow = { ...row, updated_at: updatedAt };
+                window.SmartBaraCore.setCloudVersion(period, `budgetCreator:${row.id}`, updatedAt);
+                result.saved.push(savedRow);
+            });
+            onProgress?.(result.saved.length, cloudRows.length);
+        }
+        return result;
+    }
+
+    /** Cek dalam satu query apakah baris yang akan ditimpa/dihapus sudah diubah pengguna lain. */
+    async function findRemoteConflicts(rows) {
+        const client = window.SmartBaraCore.getClient();
+        const baselines = new Map(rows
+            .filter(row => row.updated_at)
+            .map(row => [String(row.id), Date.parse(row.updated_at)]));
+        if (!client || !baselines.size) return [];
+        const ids = [...baselines.keys()];
+        const conflicts = [];
+        for (let offset = 0; offset < ids.length; offset += 200) {
+            const { data, error } = await client.from(TABLE_NAME).select('id, updated_at').in('id', ids.slice(offset, offset + 200));
+            if (error) throw error;
+            (data || []).forEach(remote => {
+                const baseline = baselines.get(String(remote.id));
+                if (Number.isFinite(baseline) && Date.parse(remote.updated_at) !== baseline) conflicts.push(String(remote.id));
+            });
+        }
+        return conflicts;
+    }
+
+    /** Simpan baris ke cloud (bulk) lalu gabungkan ke state lokal. Dipakai Import Excel & Budget AI. */
+    async function commitRows(rows, { title, label }) {
+        const period = window.SmartBaraCore.getActivePeriod();
+        if (!rows.length) return { saved: [], queued: [], failed: [], error: null, mode: 'none' };
+
+        if (!window.SmartBaraCore.canWriteCloud()) {
+            mergeIntoItems(rows);
+            persistLocal(period);
+            renderTable();
+            return { saved: rows, queued: [], failed: [], error: null, mode: 'local' };
+        }
+
+        if (storageMode === 'settings') {
+            mergeIntoItems(rows);
+            persistLocal(period);
+            renderTable();
+            try {
+                await window.SmartBaraCore.syncVersionedRow('smartbara_settings', period, { key: getCacheKey(period) }, { value: items }, 'budgetCreatorFallback', label);
+                return { saved: rows, queued: [], failed: [], error: null, mode: 'settings' };
+            } catch(error) {
+                return { saved: [], queued: error.queuedForSync ? rows : [], failed: error.queuedForSync ? [] : rows, error, mode: 'settings' };
+            }
+        }
+
+        const taskId = window.SmartBaraLayout.beginLoading(title, `Menyimpan ${rows.length.toLocaleString('id-ID')} baris ke periode ${period}...`, 600000);
+        bulkOperationInProgress = true;
+        let result;
+        try {
+            result = await bulkUpsertRows(rows, {
+                label,
+                onProgress: (done, total) => window.SmartBaraLayout.updateLoading(
+                    taskId, '', `${done.toLocaleString('id-ID')} / ${total.toLocaleString('id-ID')} baris tersimpan...`, (done / total) * 100
+                )
+            });
+        } catch(error) {
+            result = { saved: [], queued: [], failed: rows, error };
+        } finally {
+            bulkOperationInProgress = false;
+        }
+
+        const kept = [...result.saved, ...result.queued];
+        mergeIntoItems(kept);
+        persistLocal(period);
+        renderTable();
+        window.SmartBaraLayout.endLoading(taskId, !result.failed.length && !result.queued.length);
+        if (reloadAfterBulk) {
+            reloadAfterBulk = false;
+            scheduleReload();
+        }
+        return { ...result, mode: 'table' };
+    }
+
+    function describeCommitResult(result, noun = 'baris') {
+        const parts = [`${result.saved.length.toLocaleString('id-ID')} ${noun} tersimpan`];
+        if (result.mode === 'local') parts[0] = `${result.saved.length.toLocaleString('id-ID')} ${noun} disimpan lokal (cloud belum tersambung)`;
+        if (result.queued.length) parts.push(`${result.queued.length.toLocaleString('id-ID')} menunggu sinkronisasi otomatis`);
+        if (result.failed.length) parts.push(`${result.failed.length.toLocaleString('id-ID')} gagal: ${result.error?.message || 'error tidak diketahui'}`);
+        return parts.join(' · ');
+    }
 
     function getAiBudgetDisplayId(aiBudgetId) {
         const fullUuid = String(aiBudgetId || '').match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)?.[0];
@@ -58,8 +293,8 @@ window.BudgetCreatorModule = (function() {
 
         // Listen to realtime change from other users
         window.SmartBaraCore.onRealtimeChange(payload => {
-            if (payload.table === 'smartbara_budget_creator_planning' || payload.table === 'smartbara_settings') {
-                loadData(true);
+            if (payload.table === TABLE_NAME || payload.table === 'smartbara_settings') {
+                scheduleReload();
             } else if (['smartbara_budget', 'smartbara_budget_site', 'smartbara_store'].includes(payload.table)) {
                 loadReferenceOptions();
             }
@@ -105,6 +340,34 @@ window.BudgetCreatorModule = (function() {
             buildManualBudgetPreview();
         });
         document.getElementById('creatorAiManualProjectSearch')?.addEventListener('input', filterManualProjects);
+        // Delegasi event tabel: satu listener untuk semua baris, bukan dipasang ulang setiap render.
+        document.getElementById('creatorTableBody')?.addEventListener('click', event => {
+            const toggle = event.target.closest('[data-creator-group-toggle]');
+            if (toggle) {
+                const key = toggle.dataset.groupKey;
+                if (expandedAccountGroups.has(key)) expandedAccountGroups.delete(key);
+                else expandedAccountGroups.add(key);
+                renderTable();
+                return;
+            }
+            const groupDelete = event.target.closest('[data-creator-group-delete]');
+            if (groupDelete) return deleteAccountGroup(groupDelete.dataset.groupKey);
+            const batchButton = event.target.closest('[data-ai-budget-id]');
+            if (batchButton) return openAiBudget(batchButton.dataset.aiBudgetId);
+            const actionButton = event.target.closest('[data-creator-action]');
+            if (!actionButton) return;
+            const id = actionButton.dataset.itemId;
+            if (actionButton.dataset.creatorAction === 'edit') openForm(id);
+            else if (actionButton.dataset.creatorAction === 'approve') approveBudgetItem(id);
+            else if (actionButton.dataset.creatorAction === 'delete') deleteItem(id);
+        });
+        document.getElementById('creatorImportSkipDuplicates')?.addEventListener('change', renderImportReview);
+        document.getElementById('creatorImportIssueFilter')?.addEventListener('change', renderImportReview);
+        window.addEventListener('beforeunload', event => {
+            if (!bulkOperationInProgress) return;
+            event.preventDefault();
+            event.returnValue = '';
+        });
         await Promise.all([loadData(), loadReferenceOptions()]);
     }
 
@@ -130,10 +393,8 @@ window.BudgetCreatorModule = (function() {
         }
 
         try {
-            const [dimRes, itemRes] = await Promise.all([
-                client.rpc('list_smartbara_planning_dimensions', { p_period: period }),
-                window.SmartBaraCore.fetchPeriodRows('smartbara_budget_creator_planning', period, { orderBy: 'created_at', ascending: false })
-            ]);
+            const itemRes = await window.SmartBaraCore.fetchPeriodRows(TABLE_NAME, period, { orderBy: 'created_at', ascending: false });
+            if (period !== window.SmartBaraCore.getActivePeriod()) return;
 
             if (itemRes.error && /not exist|schema cache|could not find/i.test(itemRes.error.message || '')) {
                 storageMode = 'settings';
@@ -148,8 +409,7 @@ window.BudgetCreatorModule = (function() {
                 items.forEach(it => window.SmartBaraCore.setCloudVersion(period, `budgetCreator:${it.id}`, it.updated_at));
             }
 
-            dimensions = dimRes.data || [];
-            localStorage.setItem(fallbackKey, JSON.stringify(items));
+            persistLocal(period);
             renderTable();
             setStatus(`${items.length} kebutuhan pembelian siap.`);
         } catch(err) {
@@ -874,55 +1134,76 @@ window.BudgetCreatorModule = (function() {
             return;
         }
 
+        const statusEl = document.getElementById('creatorAiImportStatus');
         const period = window.SmartBaraCore.getActivePeriod();
         const user = window.SmartBaraCore.getUser();
+        const existingById = new Map(items.map(item => [String(item.id), item]));
+
+        // Status final hanya boleh diubah Superadmin.
+        if (!window.SmartBaraCore.canApproveAllDepartments()) {
+            const forbidden = validRows.find(row => FINAL_STATUSES.includes(row.status) && existingById.get(String(row.id))?.status !== row.status);
+            if (forbidden) {
+                statusEl.textContent = `Status "${forbidden.status}" hanya dapat diberikan Superadmin. Ubah baris "${forbidden.item_name}" ke Draft/Diajukan.`;
+                return;
+            }
+        }
+
         if (!currentAiBudgetId) currentAiBudgetId = createAiBudgetId();
         updateAiBudgetIdDisplay();
-        const imported = validRows.map(row => ({
-            ...row,
-            id: row.id || crypto.randomUUID(),
-            ai_budget_id: currentAiBudgetId,
-            period_name: period,
-            department: row.department.trim(),
-            account_name: row.account_name.trim(),
-            project_name: row.project_name.trim(),
-            item_name: row.item_name.trim(),
-            specification: row.specification.trim(),
-            catatan: String(row.catatan || '').trim(),
-            quantity: Number(row.quantity) || 1,
-            estimated_unit_price: Number(row.estimated_unit_price) || 0,
-            needed_by: row.needed_by || null,
-            created_by: row.created_by || user?.id || null,
-            status: row.status || 'Draft',
-            updated_at: new Date().toISOString()
-        }));
-        const existingIds = new Set(items.map(item => String(item.id)));
-        const updatedCount = imported.filter(row => existingIds.has(String(row.id))).length;
+        const imported = validRows.map(row => {
+            const existing = existingById.get(String(row.id));
+            return {
+                ...row,
+                id: row.id || crypto.randomUUID(),
+                ai_budget_id: currentAiBudgetId,
+                period_name: period,
+                department: String(row.department).trim(),
+                account_name: String(row.account_name || '').trim(),
+                project_name: String(row.project_name || '').trim(),
+                item_name: String(row.item_name).trim(),
+                specification: String(row.specification || '').trim(),
+                catatan: String(row.catatan || '').trim(),
+                quantity: Number(row.quantity) || 1,
+                unit: String(row.unit || 'unit').trim() || 'unit',
+                estimated_unit_price: Number(row.estimated_unit_price) || 0,
+                priority: PRIORITIES.includes(row.priority) ? row.priority : 'Normal',
+                needed_by: row.needed_by || null,
+                created_by: row.created_by || user?.id || null,
+                status: STATUSES.includes(row.status) ? row.status : 'Draft',
+                // Baseline versi dipakai untuk deteksi konflik, bukan dikirim apa adanya.
+                updated_at: existing?.updated_at
+            };
+        });
+        const updatedCount = imported.filter(row => existingById.has(String(row.id))).length;
         const addedCount = imported.length - updatedCount;
-        const taskId = window.SmartBaraLayout.beginLoading('Mengimpor budget AI', `Menyimpan ${imported.length} baris ke periode ${period}...`);
-        let importSucceeded = false;
+
+        const importButton = document.getElementById('creatorAiImportButton');
+        if (importButton) importButton.disabled = true;
         try {
-            const importedIds = new Set(imported.map(row => row.id));
-            const nextItems = [...imported, ...items.filter(item => !importedIds.has(item.id))];
-            items = nextItems;
-            localStorage.setItem(`budget_creator_planning_${period}`, JSON.stringify(nextItems));
-            renderTable();
-            if (storageMode === 'settings') {
-                await window.SmartBaraCore.syncVersionedRow('smartbara_settings', period, { key: `budget_creator_planning_${period}` }, { value: nextItems }, 'budgetCreatorFallback', 'Budget Creator AI');
-            } else {
-                for (const row of imported) {
-                    const { id, period_name: rowPeriod, ...values } = row;
-                    await window.SmartBaraCore.syncVersionedRow('smartbara_budget_creator_planning', period, { id, period_name: rowPeriod }, values, `budgetCreator:${id}`, 'Budget Creator AI');
+            if (storageMode === 'table' && updatedCount && window.SmartBaraCore.canWriteCloud()) {
+                statusEl.textContent = 'Memeriksa perubahan dari pengguna lain...';
+                const conflicts = await findRemoteConflicts(imported.filter(row => existingById.has(String(row.id))));
+                if (conflicts.length) {
+                    statusEl.textContent = `${conflicts.length} baris sudah diubah pengguna lain sejak dimuat. Muat ulang ID ini sebelum menyimpan agar tidak menimpa perubahan mereka.`;
+                    return;
                 }
             }
-            setStatus(`Budget AI ${getAiBudgetDisplayId(currentAiBudgetId)} tersimpan: ${updatedCount} diperbarui, ${addedCount} ditambahkan.`);
+            const result = await commitRows(imported, { title: 'Menyimpan Budget AI', label: 'Budget Creator AI' });
+            const summary = describeCommitResult(result);
+            if (result.failed.length) {
+                statusEl.textContent = `Sebagian gagal disimpan — ${summary}. Baris gagal tetap di preview; perbaiki lalu simpan lagi.`;
+                const failedIds = new Set(result.failed.map(row => String(row.id)));
+                aiDraftRows = aiDraftRows.filter(row => failedIds.has(String(row.id)));
+                renderAiPreview();
+                return;
+            }
+            setStatus(`Budget AI ${getAiBudgetDisplayId(currentAiBudgetId)}: ${updatedCount} diperbarui, ${addedCount} ditambahkan. ${summary}.`);
             closeAiDialog();
-            importSucceeded = true;
         } catch(error) {
             console.error('Import AI budget error:', error);
-            document.getElementById('creatorAiImportStatus').textContent = `Tersimpan di cache lokal, sinkronisasi gagal: ${error.message}`;
+            statusEl.textContent = `Penyimpanan gagal: ${error.message}`;
         } finally {
-            window.SmartBaraLayout.endLoading(taskId, importSucceeded);
+            if (importButton) importButton.disabled = aiDraftRows.length === 0;
         }
     }
 
@@ -948,7 +1229,7 @@ window.BudgetCreatorModule = (function() {
 
         const nextItems = items.map(it => it.id === id ? nextItem : it);
         items = nextItems;
-        localStorage.setItem(`budget_creator_planning_${period}`, JSON.stringify(nextItems));
+        persistLocal(period, nextItems);
         renderTable();
 
         try {
@@ -1051,6 +1332,7 @@ window.BudgetCreatorModule = (function() {
             groups.set(key, group);
         });
 
+        const canApprove = canApproveBudgetRequests();
         const displayRows = [];
         let groupNumber = 0;
         groups.forEach(group => {
@@ -1122,27 +1404,13 @@ window.BudgetCreatorModule = (function() {
                     <td class="text-center"><span class="badge ${prioBadge}">${window.Formatters.escapeHtml(item.priority)}</span></td>
                     <td class="text-center"><span class="badge ${statusBadge}">${window.Formatters.escapeHtml(item.status)}</span></td>
                     <td class="text-right whitespace-nowrap">
-                        <button type="button" onclick="BudgetCreatorModule.openForm('${item.id}')" class="text-teal-400 hover:text-teal-300 font-bold text-xs mr-2">Edit</button>
-                        ${item.status === 'Diajukan' && canApproveBudgetRequests() ? `<button type="button" onclick="BudgetCreatorModule.approveBudgetItem('${item.id}')" class="text-emerald-400 hover:text-emerald-300 font-bold text-xs mr-2">Approve</button>` : ''}
-                        <button type="button" onclick="BudgetCreatorModule.deleteItem('${item.id}')" class="text-rose-400 hover:text-rose-300 font-bold text-xs">Hapus</button>
+                        <button type="button" data-creator-action="edit" data-item-id="${window.Formatters.escapeHtml(item.id)}" class="text-teal-400 hover:text-teal-300 font-bold text-xs mr-2">Edit</button>
+                        ${item.status === 'Diajukan' && canApprove ? `<button type="button" data-creator-action="approve" data-item-id="${window.Formatters.escapeHtml(item.id)}" class="text-emerald-400 hover:text-emerald-300 font-bold text-xs mr-2">Approve</button>` : ''}
+                        <button type="button" data-creator-action="delete" data-item-id="${window.Formatters.escapeHtml(item.id)}" class="text-rose-400 hover:text-rose-300 font-bold text-xs">Hapus</button>
                     </td>
                 </tr>
             `;
         }).join('');
-        tbody.querySelectorAll('[data-creator-group-toggle]').forEach(button => {
-            button.addEventListener('click', () => {
-                const key = button.dataset.groupKey;
-                if (expandedAccountGroups.has(key)) expandedAccountGroups.delete(key);
-                else expandedAccountGroups.add(key);
-                renderTable();
-            });
-        });
-        tbody.querySelectorAll('[data-creator-group-delete]').forEach(button => {
-            button.addEventListener('click', () => deleteAccountGroup(button.dataset.groupKey));
-        });
-        tbody.querySelectorAll('[data-ai-budget-id]').forEach(button => {
-            button.addEventListener('click', () => openAiBudget(button.dataset.aiBudgetId));
-        });
     }
 
     async function loadAiBudgetById() {
@@ -1191,7 +1459,7 @@ window.BudgetCreatorModule = (function() {
         const loadedIds = new Set(matching.map(item => String(item.id)));
         items = [...matching, ...items.filter(item => !loadedIds.has(String(item.id)))];
         try {
-            localStorage.setItem(`budget_creator_planning_${period}`, JSON.stringify(items));
+            persistLocal(period, items);
         } catch(e) {}
         matching.forEach(item => {
             if (item.updated_at) window.SmartBaraCore.setCloudVersion(period, `budgetCreator:${item.id}`, item.updated_at);
@@ -1326,7 +1594,7 @@ window.BudgetCreatorModule = (function() {
         const isEdit = items.some(it => it.id === id);
         const nextItems = isEdit ? items.map(it => it.id === id ? { ...it, ...payload } : it) : [payload, ...items];
         items = nextItems;
-        localStorage.setItem(`budget_creator_planning_${period}`, JSON.stringify(nextItems));
+        persistLocal(period, nextItems);
         renderTable();
         closeForm();
 
@@ -1371,7 +1639,7 @@ window.BudgetCreatorModule = (function() {
         const period = window.SmartBaraCore.getActivePeriod();
         const nextItems = originalItems.filter(item => getAccountGroupKey(item) !== groupKey);
         items = nextItems;
-        localStorage.setItem(`budget_creator_planning_${period}`, JSON.stringify(nextItems));
+        persistLocal(period, nextItems);
         renderTable();
 
         if (!window.SmartBaraCore.canWriteCloud()) {
@@ -1389,7 +1657,7 @@ window.BudgetCreatorModule = (function() {
                     return;
                 }
                 items = originalItems;
-                localStorage.setItem(`budget_creator_planning_${period}`, JSON.stringify(originalItems));
+                persistLocal(period, originalItems);
                 renderTable();
                 setStatus(`Penghapusan dibatalkan karena konflik cloud: ${error.message}`, true);
             }
@@ -1397,26 +1665,49 @@ window.BudgetCreatorModule = (function() {
         }
 
         const failedItems = [];
-        for (let offset = 0; offset < groupItems.length; offset += 5) {
-            const batch = groupItems.slice(offset, offset + 5);
-            const results = await Promise.allSettled(batch.map(item =>
-                window.SmartBaraCore.deleteVersionedRow(
-                    'smartbara_budget_creator_planning',
-                    period,
-                    { id: item.id, period_name: item.period_name || period },
-                    `budgetCreator:${item.id}`,
-                    'Budget Creator'
-                )
-            ));
-            results.forEach((result, index) => {
-                if (result.status === 'rejected' && !result.reason?.queuedForSync) failedItems.push(batch[index]);
-            });
+        const client = window.SmartBaraCore.getClient();
+        const taskId = window.SmartBaraLayout.beginLoading('Menghapus kebutuhan', `Menghapus ${groupItems.length} baris...`);
+        bulkOperationInProgress = true;
+        try {
+            // Satu query cek konflik untuk seluruh grup, lalu hapus per 200 id sekaligus.
+            let conflictIds = new Set();
+            try {
+                conflictIds = new Set(await findRemoteConflicts(groupItems));
+            } catch(error) {
+                if (!isRetryableError(error)) throw error;
+            }
+            groupItems.filter(item => conflictIds.has(String(item.id))).forEach(item => failedItems.push(item));
+            const deletable = groupItems.filter(item => !conflictIds.has(String(item.id)));
+            for (let offset = 0; offset < deletable.length; offset += 200) {
+                const chunk = deletable.slice(offset, offset + 200);
+                const { error } = await client.from(TABLE_NAME).delete().eq('period_name', period).in('id', chunk.map(item => item.id));
+                if (error) {
+                    if (!isRetryableError(error)) {
+                        failedItems.push(...deletable.slice(offset));
+                        break;
+                    }
+                    // Jaringan putus: serahkan ke antrean sinkronisasi per baris.
+                    const results = await Promise.allSettled(chunk.map(item => window.SmartBaraCore.deleteVersionedRow(
+                        TABLE_NAME, period, { id: item.id, period_name: period }, `budgetCreator:${item.id}`, 'Budget Creator'
+                    )));
+                    results.forEach((result, index) => {
+                        if (result.status === 'rejected' && !result.reason?.queuedForSync) failedItems.push(chunk[index]);
+                    });
+                }
+                window.SmartBaraLayout.updateLoading(taskId, '', `${Math.min(offset + 200, deletable.length)} / ${deletable.length} baris diproses...`, ((offset + chunk.length) / deletable.length) * 100);
+            }
+        } catch(error) {
+            console.warn('Bulk delete error:', error);
+            groupItems.forEach(item => { if (!failedItems.includes(item)) failedItems.push(item); });
+        } finally {
+            bulkOperationInProgress = false;
+            window.SmartBaraLayout.endLoading(taskId, !failedItems.length);
         }
 
         if (failedItems.length) {
             const failedIds = new Set(failedItems.map(item => String(item.id)));
             items = originalItems.filter(item => getAccountGroupKey(item) !== groupKey || failedIds.has(String(item.id)));
-            localStorage.setItem(`budget_creator_planning_${period}`, JSON.stringify(items));
+            persistLocal(period, items);
             renderTable();
             setStatus(`${groupItems.length - failedItems.length} item terhapus; ${failedItems.length} item gagal karena konflik cloud dan tetap ditampilkan.`, true);
             return;
@@ -1444,7 +1735,7 @@ window.BudgetCreatorModule = (function() {
         const period = window.SmartBaraCore.getActivePeriod();
         const nextItems = items.filter(it => it.id !== id);
         items = nextItems;
-        localStorage.setItem(`budget_creator_planning_${period}`, JSON.stringify(nextItems));
+        persistLocal(period, nextItems);
         renderTable();
 
         if (window.SmartBaraCore.canWriteCloud()) {
@@ -1566,16 +1857,12 @@ window.BudgetCreatorModule = (function() {
             headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0D9488' } };
             headerRow.alignment = { vertical: 'middle', horizontal: 'center' };
 
-            // Empty Formatted Rows up to row 100
-            for (let r = 4; r <= 100; r++) {
-                sheet.addRow(['', '', '', '', '', '', '', '', '', '', '', '']);
-            }
+            // Baris isian terformat (minimal 1 baris referensi agar rentang validasi tetap sah)
+            const deptCount = Math.max(1, lists.departments.length);
+            const accCount = Math.max(1, lists.accounts.length);
+            const projCount = Math.max(1, lists.projects.length);
 
-            const deptCount = lists.departments.length;
-            const accCount = lists.accounts.length;
-            const projCount = lists.projects.length;
-
-            for (let r = 4; r <= 100; r++) {
+            for (let r = 4; r <= TEMPLATE_LAST_ROW; r++) {
                 const row = sheet.getRow(r);
                 row.height = 22;
                 row.getCell(6).numFmt = '#,##0.##';
@@ -1591,7 +1878,7 @@ window.BudgetCreatorModule = (function() {
                 row.getCell(11).dataValidation = { type: 'list', allowBlank: true, showErrorMessage: false, formulae: [`Referensi!$E$2:$E$${lists.statuses.length + 1}`] };
             }
 
-            sheet.autoFilter = { from: 'A3', to: 'L100' };
+            sheet.autoFilter = { from: 'A3', to: `L${TEMPLATE_LAST_ROW}` };
 
             const buffer = await workbook.xlsx.writeBuffer();
             const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
@@ -1738,164 +2025,331 @@ window.BudgetCreatorModule = (function() {
         }
     }
 
-    // Robust Excel Importer
+    // ==========================================================================
+    // IMPORT EXCEL: baca -> validasi -> tinjau -> simpan bulk
+    // ==========================================================================
+    function pickSheetName(workbook) {
+        const candidates = workbook.SheetNames.filter(name => !/referensi/i.test(name));
+        return candidates.find(name => /template|plan|budget|kebutuhan/i.test(name)) || candidates[0] || workbook.SheetNames[0];
+    }
+
+    function detectHeaderRow(json) {
+        for (let r = 0; r < Math.min(20, json.length); r++) {
+            const cells = (json[r] || []).map(c => String(c || '').toLowerCase());
+            const hasItem = cells.some(c => c.includes('kebutuhan') || c.includes('barang') || c.includes('item'));
+            const hasContext = cells.some(c => /departemen|dept|akun|account|proyek|project/.test(c));
+            if (hasItem && hasContext) return r;
+        }
+        return 0;
+    }
+
+    /** Petakan kolom: cocok persis dulu, baru "mengandung"; satu kolom tidak dipakai dua field. */
+    function mapImportColumns(headerCells) {
+        const header = headerCells.map(v => String(v || '').trim().toLowerCase().replace(/\s+/g, ' '));
+        const used = new Set();
+        const pick = names => {
+            for (const exact of [true, false]) {
+                for (const name of names) {
+                    const index = header.findIndex((cell, i) => !used.has(i) && cell && (exact ? cell === name : cell.includes(name)));
+                    if (index >= 0) {
+                        used.add(index);
+                        return index;
+                    }
+                }
+            }
+            return -1;
+        };
+        // Urutan penting: field dengan nama spesifik dipetakan sebelum yang generik
+        // (mis. "Harga Satuan" harus diambil sebelum "Satuan").
+        const col = {};
+        col.unitPrice = pick(['estimasi harga satuan (rp)', 'estimasi harga satuan', 'harga satuan (rp)', 'harga satuan', 'unit price']);
+        col.total = pick(['estimasi total (rp)', 'estimasi total']);
+        col.aiBudgetId = pick(['id budget ai', 'ai budget id']);
+        col.department = pick(['departemen', 'department', 'dept']);
+        col.account = pick(['nama akun', 'akun', 'account']);
+        col.project = pick(['nama proyek up', 'nama proyek', 'proyek up', 'proyek', 'project']);
+        col.item = pick(['kebutuhan / nama barang', 'kebutuhan / barang', 'nama barang', 'kebutuhan', 'barang', 'item']);
+        col.specification = pick(['spesifikasi / alasan', 'spesifikasi', 'alasan', 'keterangan']);
+        col.catatan = pick(['catatan analisa', 'catatan']);
+        col.neededBy = pick(['tanggal dibutuhkan (yyyy-mm-dd)', 'tanggal dibutuhkan', 'tgl dibutuhkan', 'dibutuhkan', 'needed by']);
+        col.quantity = pick(['jumlah (qty)', 'jumlah', 'qty', 'quantity']);
+        col.unit = pick(['satuan', 'unit']);
+        col.priority = pick(['prioritas', 'priority']);
+        col.status = pick(['status']);
+        return col;
+    }
+
+    function matchCanonical(value, options) {
+        const key = normalizeKey(value);
+        if (!key) return '';
+        return options.find(option => normalizeKey(option) === key) || '';
+    }
+
+    function parseImportSheet(json) {
+        const headerIdx = detectHeaderRow(json);
+        const col = mapImportColumns(json[headerIdx] || []);
+        if (col.item < 0) throw new Error('Kolom "Kebutuhan / Nama Barang" tidak ditemukan. Gunakan sheet Template Planning dari template Budget Creator.');
+
+        const period = window.SmartBaraCore.getActivePeriod();
+        const user = window.SmartBaraCore.getUser();
+        const lists = getDatabaseLists();
+        const selectedDepts = window.SmartBaraCore.getSelectedDepartments();
+        const fallbackDept = selectedDepts.length === 1 ? selectedDepts[0] : '';
+        const canApprove = window.SmartBaraCore.canApproveAllDepartments();
+        const existingFingerprints = new Set(items.map(getRowFingerprint));
+        const fileFingerprints = new Map();
+        const getCell = (row, idx) => idx >= 0 ? row[idx] : undefined;
+        const text = (row, idx) => String(getCell(row, idx) ?? '').trim();
+        const isBlank = value => String(value ?? '').trim() === '';
+        const now = new Date().toISOString();
+        const entries = [];
+
+        for (let i = headerIdx + 1; i < json.length; i++) {
+            const row = json[i];
+            if (!Array.isArray(row) || row.every(isBlank)) continue;
+            const firstCell = String(row[0] ?? '').trim().toLowerCase();
+            if (firstCell === 'total' || firstCell.startsWith('petunjuk')) continue;
+            const itemName = text(row, col.item);
+            if (!itemName) continue;
+
+            const rowNumber = i + 1;
+            const errors = [];
+            const warnings = [];
+
+            let department = text(row, col.department);
+            if (!department && fallbackDept) {
+                department = fallbackDept;
+                warnings.push(`Departemen kosong, diisi ${fallbackDept} (filter departemen aktif).`);
+            }
+            if (!department) errors.push('Departemen wajib diisi.');
+            else {
+                const canonical = matchCanonical(department, lists.departments);
+                if (canonical) department = canonical;
+                else warnings.push(`Departemen "${department}" belum ada di daftar.`);
+            }
+
+            let accountName = text(row, col.account);
+            if (accountName && lists.accounts.length) {
+                const canonical = matchCanonical(accountName, lists.accounts);
+                if (canonical) accountName = canonical;
+                else warnings.push(`Akun "${accountName}" tidak ada di Budget Plan periode ini.`);
+            }
+            let projectName = text(row, col.project);
+            if (projectName && lists.projects.length) {
+                const canonical = matchCanonical(projectName, lists.projects);
+                if (canonical) projectName = canonical;
+                else warnings.push(`Proyek "${projectName}" tidak ada di referensi.`);
+            }
+
+            const rawQty = getCell(row, col.quantity);
+            const quantity = window.Formatters.parseNumber(rawQty, isBlank(rawQty) ? 1 : NaN);
+            if (!Number.isFinite(quantity) || quantity <= 0) errors.push(`Jumlah tidak valid ("${String(rawQty ?? '')}").`);
+
+            const rawPrice = getCell(row, col.unitPrice);
+            const price = window.Formatters.parseNumber(rawPrice, isBlank(rawPrice) ? 0 : NaN);
+            if (!Number.isFinite(price) || price < 0) errors.push(`Harga satuan tidak valid ("${String(rawPrice ?? '')}").`);
+            else if (price === 0) warnings.push('Harga satuan 0.');
+
+            const rawDate = getCell(row, col.neededBy);
+            const neededBy = window.Formatters.normalizeDate(rawDate);
+            if (!isBlank(rawDate) && !neededBy) warnings.push(`Tanggal "${String(rawDate)}" tidak terbaca, dikosongkan.`);
+
+            const rawPriority = text(row, col.priority);
+            const priority = PRIORITIES.find(p => p.toLowerCase() === rawPriority.toLowerCase()) || 'Normal';
+            if (rawPriority && priority.toLowerCase() !== rawPriority.toLowerCase()) warnings.push(`Prioritas "${rawPriority}" tidak dikenal, dipakai Normal.`);
+
+            const rawStatus = text(row, col.status);
+            let status = STATUSES.find(s => s.toLowerCase() === rawStatus.toLowerCase()) || 'Draft';
+            if (rawStatus && status.toLowerCase() !== rawStatus.toLowerCase()) warnings.push(`Status "${rawStatus}" tidak dikenal, dipakai Draft.`);
+            if (FINAL_STATUSES.includes(status) && !canApprove) {
+                warnings.push(`Status ${status} butuh Superadmin, diubah menjadi Diajukan.`);
+                status = 'Diajukan';
+            }
+
+            const data = {
+                id: crypto.randomUUID(),
+                period_name: period,
+                department,
+                account_name: accountName,
+                project_name: projectName,
+                item_name: itemName,
+                specification: text(row, col.specification),
+                catatan: text(row, col.catatan),
+                ai_budget_id: text(row, col.aiBudgetId) || null,
+                quantity: Number.isFinite(quantity) ? quantity : 0,
+                unit: text(row, col.unit) || 'unit',
+                estimated_unit_price: Number.isFinite(price) ? price : 0,
+                priority,
+                needed_by: neededBy,
+                status,
+                created_by: user?.id || null,
+                created_at: now,
+                updated_at: now
+            };
+
+            const fingerprint = getRowFingerprint(data);
+            const duplicateOfExisting = existingFingerprints.has(fingerprint);
+            if (duplicateOfExisting) warnings.push('Sama persis dengan data yang sudah ada di database.');
+            if (fileFingerprints.has(fingerprint)) warnings.push(`Sama persis dengan baris ${fileFingerprints.get(fingerprint)} di file ini.`);
+            else fileFingerprints.set(fingerprint, rowNumber);
+
+            entries.push({ rowNumber, data, errors, warnings, duplicateOfExisting });
+        }
+        return entries;
+    }
+
     async function importExcel(event) {
+        const input = event?.target;
+        const file = input?.files?.[0];
+        if (input) input.value = '';
         if (!window.SmartBaraCore.canWriteData()) {
             setStatus('Level akses Viewer hanya dapat membaca kebutuhan.', true);
-            if (event?.target) event.target.value = '';
             return;
         }
-        const file = event?.target?.files?.[0];
         if (!file) return;
+        if (bulkOperationInProgress) {
+            setStatus('Masih ada proses upload berjalan. Tunggu hingga selesai.', true);
+            return;
+        }
         try { await window.ensureLibrary('xlsx'); }
         catch(e) {
             setStatus('Library Excel gagal dimuat. Periksa internet.', true);
-            if (event?.target) event.target.value = '';
             return;
         }
 
-        setStatus('Membaca file Excel...');
-        const reader = new FileReader();
-        reader.onload = async (e) => {
-            try {
-                const workbook = XLSX.read(new Uint8Array(e.target.result), { type: 'array', cellDates: true });
-                
-                // Select proper sheet
-                let targetSheet = workbook.SheetNames[0];
-                for (const name of workbook.SheetNames) {
-                    const l = name.toLowerCase();
-                    if (l.includes('template') || l.includes('plan') || l.includes('budget') || l.includes('kebutuhan')) {
-                        targetSheet = name;
-                        break;
-                    }
-                }
-                if (targetSheet.toLowerCase().includes('referensi') && workbook.SheetNames.length > 1) {
-                    targetSheet = workbook.SheetNames.find(n => !n.toLowerCase().includes('referensi')) || workbook.SheetNames[0];
-                }
+        const taskId = window.SmartBaraLayout.beginLoading('Membaca file Excel', file.name);
+        try {
+            // Tanpa cellDates: tanggal tetap serial Excel sehingga tidak bergeser karena zona waktu (WIB).
+            const workbook = XLSX.read(new Uint8Array(await file.arrayBuffer()), { type: 'array' });
+            const sheetName = pickSheetName(workbook);
+            const json = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, defval: '', raw: true });
+            if (json.length < 2) throw new Error('File Excel kosong atau tidak valid.');
+            const entries = parseImportSheet(json);
+            if (!entries.length) throw new Error('Tidak ada baris kebutuhan yang terbaca di file.');
+            if (entries.length > MAX_IMPORT_ROWS) throw new Error(`File berisi ${entries.length.toLocaleString('id-ID')} baris; maksimal ${MAX_IMPORT_ROWS.toLocaleString('id-ID')} per upload. Pecah file menjadi beberapa bagian.`);
+            pendingImport = { fileName: file.name, sheetName, entries };
+            openImportReview();
+            setStatus(`${entries.length.toLocaleString('id-ID')} baris terbaca dari ${file.name}. Tinjau sebelum disimpan.`);
+        } catch(error) {
+            console.error('Import error:', error);
+            setStatus(`Import gagal: ${error.message}`, true);
+        } finally {
+            window.SmartBaraLayout.endLoading(taskId, true);
+        }
+    }
 
-                const sheet = workbook.Sheets[targetSheet];
-                const json = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
-                if (json.length < 2) {
-                    setStatus('File Excel kosong atau tidak valid.', true);
-                    return;
-                }
+    function getImportSelection() {
+        if (!pendingImport) return [];
+        const skipDuplicates = document.getElementById('creatorImportSkipDuplicates')?.checked !== false;
+        return pendingImport.entries.filter(entry => !entry.errors.length && !(skipDuplicates && entry.duplicateOfExisting));
+    }
 
-                // Dynamic Header Row Detection
-                let headerIdx = -1;
-                for (let r = 0; r < Math.min(15, json.length); r++) {
-                    const cells = (json[r] || []).map(c => String(c || '').toLowerCase());
-                    const hasItem = cells.some(c => c.includes('kebutuhan') || c.includes('barang') || c.includes('item'));
-                    const hasContext = cells.some(c => c.includes('departemen') || c.includes('dept') || c.includes('akun') || c.includes('account') || c.includes('proyek') || c.includes('project'));
-                    if (hasItem && hasContext) {
-                        headerIdx = r;
-                        break;
-                    }
-                }
-                if (headerIdx === -1) headerIdx = 0;
+    function openImportReview() {
+        const modal = document.getElementById('creatorImportModal');
+        if (!modal) return;
+        const skip = document.getElementById('creatorImportSkipDuplicates');
+        if (skip) skip.checked = true;
+        const filter = document.getElementById('creatorImportIssueFilter');
+        if (filter) filter.value = 'issues';
+        renderImportReview();
+        modal.classList.remove('hidden');
+        modal.classList.add('flex');
+        requestAnimationFrame(() => modal.classList.remove('opacity-0'));
+    }
 
-                const header = (json[headerIdx] || []).map(v => String(v || '').trim().toLowerCase());
-                const indexByName = names => {
-                    for (const name of names) {
-                        const found = header.findIndex(c => c === name || c.includes(name));
-                        if (found >= 0) return found;
-                    }
-                    return -1;
-                };
+    function closeImportReview() {
+        const modal = document.getElementById('creatorImportModal');
+        if (modal) {
+            modal.classList.add('opacity-0');
+            setTimeout(() => {
+                modal.classList.add('hidden');
+                modal.classList.remove('flex');
+            }, 200);
+        }
+        pendingImport = null;
+    }
 
-                const col = {
-                    department: indexByName(['departemen', 'department', 'dept']),
-                    account: indexByName(['nama akun', 'kode akun', 'akun', 'account']),
-                    project: indexByName(['nama proyek up', 'nama proyek', 'proyek up', 'proyek', 'project']),
-                    item: indexByName(['kebutuhan / nama barang', 'kebutuhan', 'nama barang', 'barang', 'item']),
-                    specification: indexByName(['spesifikasi / alasan', 'spesifikasi', 'alasan', 'keterangan']),
-                    catatan: indexByName(['catatan analisa', 'catatan']),
-                    aiBudgetId: indexByName(['id budget ai', 'ai budget id']),
-                    quantity: indexByName(['jumlah (qty)', 'jumlah', 'quantity', 'qty']),
-                    unit: indexByName(['satuan', 'unit']),
-                    unitPrice: indexByName(['estimasi harga satuan (rp)', 'estimasi harga satuan', 'harga satuan', 'unit price']),
-                    priority: indexByName(['prioritas', 'priority']),
-                    neededBy: indexByName(['tanggal dibutuhkan', 'tgl dibutuhkan', 'dibutuhkan', 'needed by']),
-                    status: indexByName(['status'])
-                };
-                if (col.item < 0) {
-                    throw new Error('Kolom "Kebutuhan / Nama Barang" tidak ditemukan. Gunakan sheet Template Planning dari template Budget Creator.');
-                }
+    function renderImportReview() {
+        if (!pendingImport) return;
+        const { entries, fileName, sheetName } = pendingImport;
+        const selection = getImportSelection();
+        const errorCount = entries.filter(entry => entry.errors.length).length;
+        const warningCount = entries.filter(entry => !entry.errors.length && entry.warnings.length).length;
+        const duplicateCount = entries.filter(entry => entry.duplicateOfExisting).length;
+        const total = selection.reduce((sum, entry) => sum + getRowTotal(entry.data), 0);
+        const fmt = value => value.toLocaleString('id-ID');
+        const escape = window.Formatters.escapeHtml;
 
-                const getCell = (row, idx) => idx >= 0 ? row[idx] : undefined;
-                const period = window.SmartBaraCore.getActivePeriod();
-                const imported = [];
+        document.getElementById('creatorImportFileName').textContent = `${fileName} · sheet "${sheetName}"`;
+        document.getElementById('creatorImportSummary').innerHTML = [
+            ['Baris terbaca', fmt(entries.length), 'text-white'],
+            ['Akan disimpan', fmt(selection.length), 'text-emerald-300'],
+            ['Error (dilewati)', fmt(errorCount), errorCount ? 'text-rose-300' : 'text-slate-400'],
+            ['Perlu dicek', fmt(warningCount), warningCount ? 'text-amber-300' : 'text-slate-400'],
+            ['Duplikat database', fmt(duplicateCount), duplicateCount ? 'text-amber-300' : 'text-slate-400'],
+            ['Estimasi total', window.Formatters.formatRupiah(total), 'text-teal-300']
+        ].map(([label, value, color]) => `
+            <div class="rounded-lg border border-white/10 bg-slate-950/50 px-3 py-2">
+                <p class="m-0 text-[10px] font-bold uppercase tracking-wider text-slate-400">${label}</p>
+                <p class="m-0 mt-0.5 text-base font-black tabular-nums ${color}">${value}</p>
+            </div>
+        `).join('');
 
-                for (let i = headerIdx + 1; i < json.length; i++) {
-                    const row = json[i];
-                    if (!Array.isArray(row) || row.every(c => String(c ?? '').trim() === '')) continue;
-                    const firstCell = String(row[0] ?? '').trim();
-                    if (firstCell.toLowerCase().includes('total') || firstCell.toLowerCase().includes('petunjuk')) continue;
+        const filter = document.getElementById('creatorImportIssueFilter')?.value || 'issues';
+        const visible = entries.filter(entry => filter === 'all'
+            || (filter === 'errors' && entry.errors.length)
+            || (filter === 'issues' && (entry.errors.length || entry.warnings.length)));
+        const limit = 500;
+        const selectedRows = new Set(selection.map(entry => entry.rowNumber));
+        const body = document.getElementById('creatorImportReviewBody');
+        body.innerHTML = visible.length ? visible.slice(0, limit).map(entry => {
+            const included = selectedRows.has(entry.rowNumber);
+            const badge = entry.errors.length
+                ? '<span class="badge badge-rose">Error</span>'
+                : !included ? '<span class="badge badge-indigo">Dilewati</span>'
+                : entry.warnings.length ? '<span class="badge badge-amber">Cek</span>' : '<span class="badge badge-emerald">OK</span>';
+            const messages = [
+                ...entry.errors.map(msg => `<li class="text-rose-300">${escape(msg)}</li>`),
+                ...entry.warnings.map(msg => `<li class="text-amber-200">${escape(msg)}</li>`)
+            ];
+            return `
+                <tr class="${included ? '' : 'opacity-60'}">
+                    <td class="text-center text-xs text-slate-400 tabular-nums">${entry.rowNumber}</td>
+                    <td class="text-center">${badge}</td>
+                    <td class="text-xs">${escape(entry.data.department || '-')}</td>
+                    <td class="text-xs max-w-[180px] truncate" title="${escape(entry.data.account_name)}">${escape(entry.data.account_name || '-')}</td>
+                    <td class="text-xs max-w-[160px] truncate" title="${escape(entry.data.project_name)}">${escape(entry.data.project_name || '-')}</td>
+                    <td class="text-xs font-bold text-teal-200 max-w-[200px] truncate" title="${escape(entry.data.item_name)}">${escape(entry.data.item_name)}</td>
+                    <td class="text-xs text-slate-400 whitespace-nowrap">${escape(entry.data.needed_by || '-')}</td>
+                    <td class="text-right text-xs tabular-nums">${window.Formatters.formatRupiah(getRowTotal(entry.data))}</td>
+                    <td class="text-[11px]">${messages.length ? `<ul class="m-0 list-disc space-y-0.5 pl-4">${messages.join('')}</ul>` : '<span class="text-slate-500">-</span>'}</td>
+                </tr>
+            `;
+        }).join('') + (visible.length > limit ? `<tr><td colspan="9" class="py-3 text-center text-xs text-slate-500">+${fmt(visible.length - limit)} baris lain tidak ditampilkan.</td></tr>` : '')
+            : `<tr><td colspan="9" class="py-10 text-center text-xs text-slate-500">${filter === 'all' ? 'Tidak ada baris.' : 'Tidak ada masalah - semua baris valid.'}</td></tr>`;
 
-                    let department = String(getCell(row, col.department) ?? getCell(row, 0) ?? '').trim();
-                    const itemName = String(getCell(row, col.item) ?? '').trim();
+        const confirmButton = document.getElementById('creatorImportConfirmButton');
+        confirmButton.disabled = !selection.length;
+        confirmButton.textContent = selection.length ? `Simpan ${fmt(selection.length)} baris` : 'Tidak ada baris valid';
+    }
 
-                    if (!itemName) continue;
-                    if (!department) department = 'HR';
-
-                    imported.push({
-                        id: crypto.randomUUID(),
-                        period_name: period,
-                        department,
-                        account_name: String(getCell(row, col.account) ?? '').trim(),
-                        project_name: String(getCell(row, col.project) ?? '').trim(),
-                        item_name: itemName,
-                        specification: String(getCell(row, col.specification) ?? '').trim(),
-                        catatan: String(getCell(row, col.catatan) ?? '').trim(),
-                        ai_budget_id: String(getCell(row, col.aiBudgetId) ?? '').trim() || null,
-                        quantity: window.Formatters.parseNumber(getCell(row, col.quantity), 1),
-                        unit: String(getCell(row, col.unit) ?? 'unit').trim() || 'unit',
-                        estimated_unit_price: window.Formatters.parseNumber(getCell(row, col.unitPrice), 0),
-                        priority: ['Tinggi', 'Normal', 'Rendah'].find(p => p.toLowerCase() === String(getCell(row, col.priority) ?? '').trim().toLowerCase()) || 'Normal',
-                        needed_by: window.Formatters.normalizeDate(getCell(row, col.neededBy)),
-                        status: ['Draft', 'Diajukan', 'Disetujui', 'Ditolak'].find(s => s.toLowerCase() === String(getCell(row, col.status) ?? '').trim().toLowerCase()) || 'Draft',
-                        created_at: new Date().toISOString(),
-                        updated_at: new Date().toISOString()
-                    });
-                }
-
-                if (!imported.length) {
-                    setStatus('Tidak ada data kebutuhan valid untuk diimport.', true);
-                    return;
-                }
-
-                // Immediately update memory and localStorage
-                const nextItems = [...imported, ...items];
-                items = nextItems;
-                localStorage.setItem(`budget_creator_planning_${period}`, JSON.stringify(nextItems));
-                renderTable();
-
-                // Concurrency-safe cloud sync if admin
-                let cloudMsg = '';
-                if (window.SmartBaraCore.canWriteCloud()) {
-                    try {
-                        if (storageMode === 'settings') {
-                            await window.SmartBaraCore.syncVersionedRow('smartbara_settings', period, { key: `budget_creator_planning_${period}` }, { value: nextItems }, 'budgetCreatorFallback', 'planning settings');
-                        } else {
-                            for (const item of imported) {
-                                const { id, period_name: p, ...values } = item;
-                                await window.SmartBaraCore.syncVersionedRow('smartbara_budget_creator_planning', period, { id, period_name: period }, values, `budgetCreator:${id}`, 'Budget Creator');
-                            }
-                        }
-                        cloudMsg = ' (tersimpan ke cloud)';
-                    } catch(err) {
-                        cloudMsg = ' (tersimpan lokal)';
-                    }
-                }
-
-                setStatus(`Berhasil import ${imported.length} kebutuhan${cloudMsg}.`);
-            } catch(err) {
-                console.error('Import error:', err);
-                setStatus(`Import gagal: ${err.message}`, true);
-            } finally {
-                if (event?.target) event.target.value = '';
-            }
-        };
-        reader.readAsArrayBuffer(file);
+    async function confirmImport() {
+        if (!pendingImport || bulkOperationInProgress) return;
+        const rows = getImportSelection().map(entry => entry.data);
+        const skipped = pendingImport.entries.length - rows.length;
+        if (!rows.length) return;
+        closeImportReview();
+        const result = await commitRows(rows, { title: 'Mengimpor Excel Budget Creator', label: 'Budget Creator Import' });
+        const message = `Import: ${describeCommitResult(result)}${skipped ? ` · ${skipped.toLocaleString('id-ID')} dilewati (error/duplikat)` : ''}.`;
+        setStatus(message, Boolean(result.failed.length));
+        if (result.failed.length) {
+            await window.SmartBaraLayout.confirmDialog({
+                title: 'Import belum selesai',
+                message: `${message} Baris yang sudah tersimpan tetap aman. Upload ulang file yang sama: baris yang sudah masuk terdeteksi sebagai duplikat dan dilewati otomatis.`,
+                confirmText: 'Mengerti',
+                cancelText: 'Tutup'
+            });
+        }
     }
 
     function setStatus(msg, isError = false) {
@@ -1927,6 +2381,9 @@ window.BudgetCreatorModule = (function() {
         deleteItem,
         downloadTemplate,
         exportExcel,
-        importExcel
+        importExcel,
+        closeImportReview,
+        confirmImport,
+        scheduleRender
     };
 })();
