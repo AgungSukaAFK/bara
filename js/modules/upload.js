@@ -397,7 +397,7 @@ window.SmartBaraUpload = (function() {
             ['IT', ['IT']], ['GA', ['GA']], ['TAMBANG', ['TAMBANG', 'MINING']],
             ['HAULING', ['HAULING', 'ANGKUT']], ['PORT', ['PORT', 'PELABUHAN']],
             ['SHIPPING', ['SHIPPING', 'KAPAL']], ['FINANCE', ['FINANCE', 'KEUANGAN']],
-            ['LOGISTIK', ['LOGISTIK', 'LOGISTIC']]
+            ['LOGISTIK', ['LOGISTIK', 'LOGISTIC']], ['UMUM', ['UMUM']]
         ];
         for (const [department, aliases] of departmentAliases) {
             if (aliases.some(alias => new RegExp(`(^|[^A-Z0-9])${alias}([^A-Z0-9]|$)`).test(clean))) return department;
@@ -410,7 +410,10 @@ window.SmartBaraUpload = (function() {
         if (clean.includes('LOGISTIK') || clean.includes('LOGISTIC')) return 'LOGISTIK';
         if (clean.includes('HRD') || clean.includes('SDM')) return 'HRD';
         if (clean.includes('LEGAL')) return 'LEGAL';
-        return clean.trim() || 'UMUM';
+        // Nama file satu kata (mis. "MARKETING.xlsx") dianggap nama departemen; judul panjang
+        // seperti "BUDGET AKUN GMI SEPTEMBER 2026" bukan departemen, jadi jatuh ke UMUM.
+        const trimmed = clean.trim();
+        return trimmed && !/\s/.test(trimmed) ? trimmed : 'UMUM';
     }
 
     function renderFileList() {
