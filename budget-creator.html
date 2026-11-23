@@ -272,6 +272,7 @@
                 </div>
                 <button type="button" onclick="BudgetCreatorModule.closeImportReview()" class="text-xl text-slate-400 hover:text-white" aria-label="Tutup">&times;</button>
             </header>
+            <div class="min-h-0 flex-1 overflow-y-auto">
             <div class="space-y-3 border-b border-white/10 p-4">
                 <div id="creatorImportSummary" class="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6"></div>
                 <div id="creatorImportModes" class="grid gap-3 lg:grid-cols-[minmax(260px,.9fr)_minmax(0,1.5fr)]">
@@ -308,13 +309,14 @@
                 </div>
                 <p class="m-0 text-[11px] text-slate-500">Baris error tidak disimpan. Baris "Cek" tetap disimpan &mdash; perbaiki di Excel lalu upload ulang bila perlu. Data disimpan bertahap per 250 baris; jika koneksi putus, baris yang sudah masuk tetap aman dan sisanya masuk antrean sinkronisasi.</p>
             </div>
-            <div class="min-h-0 flex-1 overflow-auto">
+            <div class="max-h-[60vh] min-h-[260px] overflow-auto">
                 <table class="app-table min-w-[1100px]">
                     <thead class="sticky top-0 z-10 bg-slate-900">
                         <tr><th class="w-16 text-center">Baris</th><th class="w-20 text-center">Status</th><th>Departemen</th><th>Nama Akun</th><th>Proyek UP</th><th>Kebutuhan</th><th>Tgl Dibutuhkan</th><th class="text-right">Estimasi Total</th><th>Catatan Validasi</th></tr>
                     </thead>
                     <tbody id="creatorImportReviewBody" class="divide-y divide-white/5"></tbody>
                 </table>
+            </div>
             </div>
             <footer class="flex flex-wrap items-center justify-end gap-2 border-t border-white/10 bg-slate-950/30 p-4">
                 <span id="creatorImportStatus" class="min-w-0 flex-1 break-words text-xs text-slate-400" role="status"></span>
