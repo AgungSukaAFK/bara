@@ -14,6 +14,8 @@ window.BudgetCreatorModule = (function() {
     let referenceAccountOptions = [];
     let referenceProjectOptions = [];
     let pendingImport = null;
+    let importPlanCache = null;
+    let importBusy = false;
     let bulkOperationInProgress = false;
     let reloadAfterBulk = false;
     let reloadTimer = null;
@@ -22,7 +24,6 @@ window.BudgetCreatorModule = (function() {
     const TABLE_NAME = 'smartbara_budget_creator_planning';
     const BULK_CHUNK_SIZE = 250;
     const MAX_IMPORT_ROWS = 10000;
-    const TEMPLATE_LAST_ROW = 503; // 500 baris isian setelah 3 baris judul/header
     const PRIORITIES = ['Tinggi', 'Normal', 'Rendah'];
     const STATUSES = ['Draft', 'Diajukan', 'Disetujui', 'Ditolak'];
     const FINAL_STATUSES = ['Disetujui', 'Ditolak'];
@@ -361,7 +362,6 @@ window.BudgetCreatorModule = (function() {
             else if (actionButton.dataset.creatorAction === 'approve') approveBudgetItem(id);
             else if (actionButton.dataset.creatorAction === 'delete') deleteItem(id);
         });
-        document.getElementById('creatorImportSkipDuplicates')?.addEventListener('change', renderImportReview);
         document.getElementById('creatorImportIssueFilter')?.addEventListener('change', renderImportReview);
         window.addEventListener('beforeunload', event => {
             if (!bulkOperationInProgress) return;
@@ -1770,254 +1770,518 @@ window.BudgetCreatorModule = (function() {
         };
     }
 
-    // Standardized Excel Template Generator with Combobox Data Validation
+    // ==========================================================================
+    // FORMAT WORKBOOK "RINGKASAN BUDGET" — dipakai import, export, dan template
+    // ==========================================================================
+    const ACCOUNT_TABLE = 'smartbara_budget';
+    const PROJECT_TABLE = 'smartbara_budget_site';
+    const ASSET_THRESHOLD = 5000000;   // Rp per barang
+    const ASSET_YEARS = 5;
+    const DEPRECIATION_MAP = {
+        'Biaya Peralatan Kerja': { name: 'Depresiasi Biaya Peralatan Kerja', glNo: '6000,18,03' },
+        'Biaya Perlengkapan Kantor': { name: 'Depresiasi Perlengkapan Kantor', glNo: '6000,18,04' }
+    };
+    const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Ags', 'Sep', 'Okt', 'Nov', 'Des'];
+    const COA_PREFIX = 'budget_creator_planning_coa__';
+    const IMPORT_COMPARE_FIELDS = ['department', 'account_name', 'project_name', 'item_name', 'specification', 'catatan', 'quantity', 'unit', 'estimated_unit_price', 'priority', 'needed_by', 'status'];
+
+    const pad2 = n => String(n).padStart(2, '0');
+    const emptyMonths = () => Array(12).fill(0);
+    const round2 = n => Math.round((Number(n) || 0) * 100) / 100;
+    const lineTotal = row => (Number(row.quantity) || 0) * (Number(row.estimated_unit_price) || 0);
+    const lc = value => String(value ?? '').trim().toLowerCase();
+    const sumOf = list => list.reduce((a, b) => a + (Number(b) || 0), 0);
+
+    function monthIndexOf(neededBy) {
+        const m = /^\d{4}-(\d{2})/.exec(String(neededBy || ''));
+        const n = m ? Number(m[1]) : 0;
+        return n >= 1 && n <= 12 ? n - 1 : -1;
+    }
+
+    function isAssetRow(row) {
+        return Boolean(DEPRECIATION_MAP[row.account_name]) && (Number(row.estimated_unit_price) || 0) >= ASSET_THRESHOLD;
+    }
+
+    function guessYear(rows, fallbackPeriod) {
+        const years = new Map();
+        rows.forEach(row => {
+            const year = String(row.needed_by || '').slice(0, 4);
+            if (/^\d{4}$/.test(year)) years.set(year, (years.get(year) || 0) + 1);
+        });
+        const top = [...years.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+        return top || String(fallbackPeriod || '').match(/\d{4}/)?.[0] || String(new Date().getFullYear());
+    }
+
+    function guessImportPeriodName(rows) {
+        return `GMI-BUDGET ${guessYear(rows)}`;
+    }
+
+    // ---- Membaca workbook ---------------------------------------------------
+    function sheetRows(workbook, nameFragment) {
+        const name = workbook.SheetNames.find(n => lc(n).includes(nameFragment));
+        return name ? XLSX.utils.sheet_to_json(workbook.Sheets[name], { header: 1, defval: '' }) : null;
+    }
+
+    // Sheet pembanding & referensi: dibaca hanya untuk verifikasi preview dan Master COA.
+    function parseReferenceSheets(workbook) {
+        const checks = { monthly: null, dept: null, project: null };
+        const monthly = sheetRows(workbook, 'ringkasan bulanan');
+        if (monthly) {
+            const byMonth = Array.from({ length: 12 }, () => ({ items: 0, dep: 0 }));
+            monthly.forEach(row => {
+                const idx = MONTH_SHORT.findIndex(m => lc(row[0]).startsWith(m.toLowerCase()) || (m === 'Ags' && lc(row[0]).startsWith('agu')));
+                if (idx >= 0) byMonth[idx] = { items: Number(row[1]) || 0, dep: Number(row[2]) || 0 };
+            });
+            checks.monthly = byMonth;
+        }
+        const totals = (fragment) => {
+            const rows = sheetRows(workbook, fragment);
+            if (!rows) return null;
+            const map = new Map();
+            rows.slice(1).forEach(row => {
+                const name = String(row[0] ?? '').trim();
+                if (!name || lc(name).includes('grand total')) return;
+                map.set(name.toUpperCase(), Number(row[1]) || 0);
+            });
+            return map;
+        };
+        checks.dept = totals('per departemen');
+        checks.project = totals('per proyek');
+
+        let coa = null;
+        const coaRows = sheetRows(workbook, 'master coa');
+        if (coaRows && coaRows.length > 1) {
+            coa = coaRows.slice(1)
+                .map(r => ({ no: String(r[0] ?? '').trim(), nama: String(r[1] ?? '').trim(), tipe: String(r[2] ?? '').trim(), kategori: String(r[3] ?? '').trim(), aktif: String(r[4] ?? '').trim(), sumber: String(r[5] ?? '').trim() }))
+                .filter(r => r.nama);
+        }
+        return { checks, coa };
+    }
+
+    // ---- Budget turunan (akun & proyek per departemen) dihitung dari item ------
+    function computeDerived(rows) {
+        const accounts = new Map();
+        const projects = new Map();
+        const assetBase = new Map(); // akun sumber -> Map(dept -> nilai asset)
+        const itemMonthly = emptyMonths();
+        const warnings = { withoutMonth: 0, withoutAccount: 0, withoutProject: 0 };
+        const add = (map, name, dept, field, idx, amount) => {
+            const key = `${dept.toUpperCase()}|${name.toLowerCase()}`;
+            if (!map.has(key)) map.set(key, { departemen: dept, [field]: name, budget: emptyMonths() });
+            map.get(key).budget[idx] += amount;
+        };
+
+        rows.forEach(row => {
+            const monthIdx = monthIndexOf(row.needed_by);
+            if (monthIdx < 0) warnings.withoutMonth++;
+            const idx = Math.max(monthIdx, 0);
+            const amount = lineTotal(row);
+            const dept = String(row.department || '').trim();
+            const account = String(row.account_name || '').trim();
+            const project = String(row.project_name || '').trim();
+            itemMonthly[idx] += amount;
+            if (account) add(accounts, account, dept, 'nama_akun', idx, amount); else warnings.withoutAccount++;
+            if (project) add(projects, project, dept, 'nama_proyek_up', idx, amount); else warnings.withoutProject++;
+            if (account && isAssetRow(row)) {
+                if (!assetBase.has(account)) assetBase.set(account, new Map());
+                assetBase.get(account).set(dept, (assetBase.get(account).get(dept) || 0) + amount);
+            }
+        });
+
+        // Depresiasi otomatis: ROUND(total asset / (umur*12)) per bulan, rata 12 bulan (sama dengan file).
+        const depMonthly = emptyMonths();
+        assetBase.forEach((byDept, account) => {
+            const divisor = ASSET_YEARS * 12;
+            const monthly = Math.round(sumOf([...byDept.values()]) / divisor);
+            const shares = [...byDept.entries()].map(([dept, amt]) => ({ dept, amt, share: Math.round(amt / divisor) }));
+            const diff = monthly - sumOf(shares.map(s => s.share));
+            if (diff) [...shares].sort((a, b) => b.amt - a.amt)[0].share += diff;
+            shares.forEach(({ dept, share }) => {
+                if (!share) return;
+                for (let m = 0; m < 12; m++) add(accounts, DEPRECIATION_MAP[account].name, dept, 'nama_akun', m, share);
+            });
+            for (let m = 0; m < 12; m++) depMonthly[m] += monthly;
+        });
+
+        const finish = map => [...map.values()].map(r => ({ ...r, budget: r.budget.map(round2) }));
+        return { accounts: finish(accounts), projects: finish(projects), itemMonthly: itemMonthly.map(round2), depMonthly, warnings };
+    }
+
+    // ---- Verifikasi hasil hitung vs sheet rekap di file ---------------------------
+    function verifyAgainstFile(derived, rows, checks) {
+        const results = [];
+        const near = (a, b) => Math.abs((Number(a) || 0) - (Number(b) || 0)) < 1.5;
+        const skip = label => results.push({ label, ok: null, detail: 'sheet tidak ada di file' });
+
+        if (checks?.monthly) {
+            const badItems = derived.itemMonthly.map((v, i) => [i, v]).filter(([i, v]) => !near(v, checks.monthly[i].items));
+            const badDep = derived.depMonthly.map((v, i) => [i, v]).filter(([i, v]) => !near(v, checks.monthly[i].dep));
+            const names = list => list.map(([i]) => MONTH_SHORT[i]).join(', ');
+            results.push({ label: 'Ringkasan Bulanan · kebutuhan', ok: !badItems.length, detail: badItems.length ? `selisih di ${names(badItems)}` : '12 bulan cocok' });
+            results.push({ label: 'Ringkasan Bulanan · depresiasi', ok: !badDep.length, detail: badDep.length ? `selisih di ${names(badDep)}` : '12 bulan cocok' });
+        } else skip('Ringkasan Bulanan');
+
+        const compare = (label, fileMap, field) => {
+            if (!fileMap) { skip(label); return; }
+            const mine = new Map();
+            rows.forEach(row => {
+                const key = String(row[field] || '').trim().toUpperCase();
+                if (key) mine.set(key, (mine.get(key) || 0) + lineTotal(row));
+            });
+            const names = new Set([...fileMap.keys(), ...mine.keys()]);
+            const bad = [...names].filter(n => !near(mine.get(n) || 0, fileMap.get(n) || 0));
+            results.push({ label, ok: !bad.length, detail: bad.length ? `selisih: ${bad.slice(0, 3).join(', ')}${bad.length > 3 ? ` (+${bad.length - 3})` : ''}` : `${fileMap.size} baris cocok` });
+        };
+        compare('Per Departemen', checks?.dept, 'department');
+        compare('Per Proyek', checks?.project, 'project_name');
+        return results;
+    }
+
+    // ---- Rencana perubahan -------------------------------------------------------
+    const naturalKey = r => [r.department, r.account_name, r.project_name, r.item_name, String(r.needed_by || '').slice(0, 10), Number(r.quantity) || 0, Number(r.estimated_unit_price) || 0].map(lc).join('|');
+
+    function sameImportValue(a, b, field) {
+        if (['quantity', 'estimated_unit_price'].includes(field)) return Number(a) === Number(b);
+        return String(a ?? '') === String(b ?? '');
+    }
+
+    // Baris file dicocokkan dengan baris lama lewat ID Budget (ai_budget_id); tanpa ID, lewat kombinasi isi baris.
+    function buildImportPlan(fileRows, existing, mode, targetPeriod) {
+        const byBudgetId = new Map();
+        const byNatural = new Map();
+        existing.forEach(row => {
+            const key = String(row.ai_budget_id || '').trim();
+            if (key) {
+                if (!byBudgetId.has(key)) byBudgetId.set(key, []);
+                byBudgetId.get(key).push(row);
+            } else {
+                const nk = naturalKey(row);
+                if (!byNatural.has(nk)) byNatural.set(nk, []);
+                byNatural.get(nk).push(row);
+            }
+        });
+        const usedIds = new Set();
+        const now = new Date().toISOString();
+        const toWrite = [];
+        const stats = { created: 0, updated: 0, unchanged: 0, removed: 0 };
+
+        fileRows.forEach(row => {
+            let match = null;
+            if (row.ai_budget_id) {
+                const candidates = (byBudgetId.get(row.ai_budget_id) || []).filter(c => !usedIds.has(c.id));
+                if (candidates.length === 1) match = candidates[0];
+                else if (candidates.length > 1) match = candidates.find(c => lc(c.item_name) === lc(row.item_name)) || null;
+            } else {
+                match = (byNatural.get(naturalKey(row)) || []).find(c => !usedIds.has(c.id)) || null;
+            }
+
+            if (match) {
+                usedIds.add(match.id);
+                const changed = IMPORT_COMPARE_FIELDS.some(field => !sameImportValue(match[field], row[field], field));
+                if (!changed) { stats.unchanged++; return; }
+                stats.updated++;
+                toWrite.push({ ...row, id: match.id, period_name: targetPeriod, created_by: match.created_by ?? row.created_by ?? null, created_at: match.created_at || now, updated_at: now });
+            } else {
+                stats.created++;
+                toWrite.push({ ...row, id: crypto.randomUUID(), period_name: targetPeriod, created_at: now, updated_at: now });
+            }
+        });
+
+        const keepIds = new Set([...usedIds, ...toWrite.map(r => r.id)]);
+        const toRemove = mode === 'replace' ? existing.filter(row => !keepIds.has(row.id)) : [];
+        stats.removed = toRemove.length;
+        return { stats, toWrite, toRemove };
+    }
+
+    // Budget akun / proyek: identitas baris = departemen + nama (sama dengan halaman Budget).
+    function buildTablePlan(derivedRows, existing, mode, targetPeriod, nameField) {
+        const identity = (dept, name) => `${String(dept || '').trim().toUpperCase()}|${lc(name)}`;
+        const byIdentity = new Map();
+        existing.forEach(row => {
+            const key = identity(row.departemen ?? row.dept, row[nameField] ?? row.nama);
+            if (!byIdentity.has(key)) byIdentity.set(key, row);
+        });
+        const now = new Date().toISOString();
+        const toWrite = [];
+        const stats = { created: 0, updated: 0, unchanged: 0, removed: 0 };
+        const keepIds = new Set();
+
+        derivedRows.forEach(row => {
+            const match = byIdentity.get(identity(row.departemen, row[nameField]));
+            const base = { period_name: targetPeriod, departemen: row.departemen, [nameField]: row[nameField], budget: row.budget };
+            if (match) {
+                keepIds.add(match.id);
+                const old = Array.isArray(match.budget) ? match.budget : [];
+                const same = row.budget.every((v, i) => round2(old[i]) === round2(v)) && old.length === row.budget.length;
+                if (same) { stats.unchanged++; return; }
+                stats.updated++;
+                toWrite.push({ ...base, id: match.id, created_at: match.created_at || now, updated_at: now });
+            } else {
+                stats.created++;
+                toWrite.push({ ...base, id: crypto.randomUUID(), created_at: now, updated_at: now });
+            }
+        });
+        const toRemove = mode === 'replace' ? existing.filter(row => !keepIds.has(row.id)) : [];
+        stats.removed = toRemove.length;
+        return { stats, toWrite, toRemove };
+    }
+
+    // ---- Workbook laporan (9 sheet, format sama dengan Ringkasan_Budget) -------------
+    function buildReportWorkbook(rows, period, coaRows) {
+        const derived = computeDerived(rows);
+        const year = guessYear(rows, period);
+        const coaByName = new Map();
+        (coaRows || []).forEach(c => {
+            const key = lc(c.nama);
+            const current = coaByName.get(key);
+            if (!current || (lc(current.aktif) !== 'ya' && lc(c.aktif) === 'ya')) coaByName.set(key, c);
+        });
+        const coaOf = name => coaByName.get(lc(name)) || {};
+
+        // Agregat per akun (semua departemen)
+        const accAgg = new Map();
+        derived.accounts.forEach(a => {
+            if (!accAgg.has(a.nama_akun)) accAgg.set(a.nama_akun, { name: a.nama_akun, months: emptyMonths(), count: 0 });
+            a.budget.forEach((v, i) => { accAgg.get(a.nama_akun).months[i] += v; });
+        });
+        rows.forEach(r => { if (r.account_name) accAgg.get(r.account_name).count++; });
+        const accList = [...accAgg.values()].map(a => ({ ...a, total: sumOf(a.months), coa: coaOf(a.name) })).sort((a, b) => b.total - a.total);
+        const grandTotal = sumOf(accList.map(a => a.total));
+
+        const ordered = [...rows].sort((a, b) => String(a.department).localeCompare(String(b.department)) || String(a.needed_by || '').localeCompare(String(b.needed_by || '')));
+        const monthOf = r => { const i = monthIndexOf(r.needed_by); return pad2((i < 0 ? 0 : i) + 1); };
+        const identitas = r => DEPRECIATION_MAP[r.account_name] ? (isAssetRow(r) ? 'Asset' : 'Non Asset') : '-';
+
+        // 1. Rekap Kebutuhan Item (sumber untuk import)
+        const s1 = [['ID Budget', 'Departemen', 'Bulan', 'No. Akun', 'Nomor Sumber', 'Nama Akun', 'Tipe Akun', 'Identitas Asset', 'Nama Proyek UP', 'Nama Pelanggan/Pemasok', 'Kebutuhan / Nama Barang', 'Spesifikasi / Alasan', 'Jumlah', 'Satuan', 'Estimasi Harga Satuan (Rp)', 'Prioritas', 'Tanggal Dibutuhkan (YYYY-MM-DD)', 'Status', 'Catatan Analisa', 'Total Harga (Rp)']];
+        ordered.forEach(r => s1.push([r.ai_budget_id || '', r.department, monthOf(r), coaOf(r.account_name).no || '', '', r.account_name || '', coaOf(r.account_name).tipe || '', identitas(r), r.project_name || '', '-', r.item_name, r.specification || '', Number(r.quantity) || 0, r.unit || '', Number(r.estimated_unit_price) || 0, r.priority || 'Normal', r.needed_by ? String(r.needed_by).slice(0, 10) : '', r.status || 'Draft', r.catatan || '', lineTotal(r)]));
+
+        // 2. Resume Bulanan per Akun
+        const s2 = [['RESUME KEBUTUHAN BULANAN (01–12) PER NAMA AKUN'], ['Departemen: Semua   |   Proyek: Semua'], [],
+            ['No. Akun', 'Nama Akun', 'Tipe Akun', 'Kategori', ...MONTH_SHORT.map((m, i) => `${pad2(i + 1)} - ${m}`), 'Total/Tahun (Rp)', 'Jumlah Item']];
+        accList.forEach(a => s2.push([a.coa.no || '', a.name, a.coa.tipe || '', a.coa.kategori || '', ...a.months.map(round2), round2(a.total), a.count || 'otomatis']));
+        s2.push(['', 'GRAND TOTAL', '', '', ...MONTH_SHORT.map((_, i) => round2(sumOf(accList.map(a => a.months[i])))), round2(grandTotal), '']);
+
+        // 3. Rincian Item & Akun
+        const s3 = [['RINCIAN DETAIL BUDGET ' + year + ' PER NAMA AKUN'], ['Departemen: Semua   |   Proyek: Semua'], [],
+            ['ID Budget', 'No', 'No. Akun', 'Nomor Sumber', 'Nama Akun', 'Tipe Akun', 'Identitas Asset', 'Departemen', 'Proyek', 'Nama Pelanggan/Pemasok', 'Kebutuhan / Nama Item', 'Spesifikasi / Keterangan', 'Bulan', 'Qty', 'Satuan', 'Harga Satuan (Rp)', 'Total Item (Rp)', 'Subtotal Akun (Rp)', 'Grand Total (Rp)']];
+        accList.forEach((a, n) => {
+            const own = ordered.filter(r => r.account_name === a.name);
+            if (!own.length) return;
+            s3.push(['', n + 1, a.coa.no || '', '', `${a.name}${a.coa.kategori ? ` (${a.coa.kategori})` : ''}`, a.coa.tipe || '', '', '', '', '', `${own.length} baris rincian item`]);
+            own.forEach((r, i) => s3.push([r.ai_budget_id || '', i + 1, a.coa.no || '', '', r.account_name, a.coa.tipe || '', identitas(r), r.department, r.project_name || '', '-', r.item_name, r.specification || '', monthOf(r), Number(r.quantity) || 0, r.unit || '', Number(r.estimated_unit_price) || 0, lineTotal(r)]));
+            s3.push(['', '', '', '', `Subtotal ${a.name}`, '', '', '', '', '', '', '', '', '', '', '', '', round2(sumOf(own.map(lineTotal)))]);
+        });
+        s3.push(['', '', '', '', 'GRAND TOTAL ITEM', '', '', '', '', '', '', '', '', '', '', '', '', '', round2(sumOf(rows.map(lineTotal)))]);
+
+        // 4. Detail per Akun
+        const s4 = [['No. Akun', 'Nama Akun', 'Tipe Akun', 'Kategori', ...MONTH_SHORT, 'Total/Tahun (Rp)', 'Grand Total (Rp)']];
+        accList.forEach(a => s4.push([a.coa.no || '', a.name, a.coa.tipe || '', a.coa.kategori || '', ...a.months.map(round2), round2(a.total)]));
+        s4.push(['', 'GRAND TOTAL (Lihat Kolom R)', '', '', ...Array(12).fill(''), '', round2(grandTotal)]);
+
+        // 5. Ringkasan Bulanan
+        const s5 = [['Bulan ' + year, 'Kebutuhan Item & Jasa (Rp)', 'Depresiasi Asset Otomatis (Rp)', 'Total Bulanan (Rp)', 'Grand Total Tahunan (Rp)']];
+        MONTH_SHORT.forEach((m, i) => s5.push([`${m} ${year}`, derived.itemMonthly[i], derived.depMonthly[i], round2(derived.itemMonthly[i] + derived.depMonthly[i])]));
+        s5.push(['GRAND TOTAL', '', '', '', round2(sumOf(derived.itemMonthly) + sumOf(derived.depMonthly))]);
+
+        // 6 & 7. Per Departemen / Per Proyek
+        const groupTotals = field => {
+            const map = new Map();
+            rows.forEach(r => {
+                const key = String(r[field] || '').trim();
+                if (key) map.set(key, (map.get(key) || 0) + lineTotal(r));
+            });
+            return [...map.entries()].sort((a, b) => b[1] - a[1]);
+        };
+        const s6 = [['Departemen', 'Total Kebutuhan (Rp)', 'Grand Total (Rp)'], ...groupTotals('department').map(([k, v]) => [k, round2(v)]), ['GRAND TOTAL', '', round2(sumOf(rows.map(lineTotal)))]];
+        const s7 = [['Proyek', 'Total Kebutuhan (Rp)', 'Grand Total (Rp)'], ...groupTotals('project_name').map(([k, v]) => [k, round2(v)]), ['GRAND TOTAL', '', round2(sumOf(rows.filter(r => r.project_name).map(lineTotal)))]];
+
+        // 8. Asset & Depresiasi
+        const s8 = [['PERHITUNGAN IDENTITAS ASSET (>= Rp 5.000.000 / BARANG) & DEPRESIASI OTOMATIS'], [],
+            ['Batas Asset (Rp/Barang)', ASSET_THRESHOLD, '', 'Umur Depresiasi (Tahun)', ASSET_YEARS], [],
+            ['Akun Depresiasi (Ringkasan)', 'No. Akun GL', 'Sumber Asset', 'Total Nilai Asset (Rp)', 'Total Non-Asset (Rp)', 'Item Asset', 'Depresiasi / Tahun (Rp)', 'Depresiasi / Bulan (Rp)']];
+        let totalAsset = 0, totalNon = 0, totalYear = 0, totalMonth = 0;
+        Object.entries(DEPRECIATION_MAP).forEach(([source, dep]) => {
+            const own = rows.filter(r => r.account_name === source);
+            const assetRows = own.filter(isAssetRow);
+            const asset = sumOf(assetRows.map(lineTotal));
+            const non = sumOf(own.filter(r => !isAssetRow(r)).map(lineTotal));
+            const monthly = Math.round(asset / (ASSET_YEARS * 12));
+            totalAsset += asset; totalNon += non; totalMonth += monthly; totalYear += monthly * 12;
+            s8.push([dep.name, dep.glNo, source, round2(asset), round2(non), assetRows.length, monthly * 12, monthly]);
+        });
+        s8.push(['TOTAL DEPRESIASI OTOMATIS', '', '', round2(totalAsset), round2(totalNon), '', totalYear, totalMonth], []);
+        s8.push(['ID Budget', 'Departemen', 'Proyek', 'Nomor Sumber', 'Nama Akun', 'Kebutuhan / Nama Barang', 'Nama Pemasok', 'Bulan', 'Qty Total', 'Satuan', 'Harga Satuan (Rp)', 'Total Tahunan (Rp)', 'Identitas Asset']);
+        ordered.filter(r => DEPRECIATION_MAP[r.account_name]).forEach(r => s8.push([r.ai_budget_id || '', r.department, r.project_name || '', '', r.account_name, r.item_name, '-', monthOf(r), Number(r.quantity) || 0, r.unit || '', Number(r.estimated_unit_price) || 0, lineTotal(r), identitas(r)]));
+
+        // 9. Master COA GL
+        const s9 = [['No. Akun', 'Nama Akun', 'Tipe Akun', 'Kategori', 'Aktif di Kuesioner', 'Sumber'], ...(coaRows || []).map(c => [c.no, c.nama, c.tipe, c.kategori, c.aktif, c.sumber])];
+
+        const workbook = XLSX.utils.book_new();
+        const add = (name, aoa, widths) => {
+            const ws = XLSX.utils.aoa_to_sheet(aoa);
+            if (widths) ws['!cols'] = widths.map(wch => ({ wch }));
+            XLSX.utils.book_append_sheet(workbook, ws, name);
+        };
+        add('Rekap Kebutuhan Item', s1, [14, 16, 7, 16, 14, 28, 14, 14, 24, 18, 34, 34, 8, 8, 16, 10, 16, 11, 30, 16]);
+        add('Resume Bulanan per Akun', s2, [16, 34, 14, 22, ...Array(12).fill(14), 18, 12]);
+        add('Rincian Item & Akun', s3, [14, 5, 16, 12, 34, 14, 12, 16, 22, 16, 34, 30, 7, 7, 8, 14, 16, 18, 18]);
+        add('Detail per Akun', s4, [16, 34, 14, 22, ...Array(12).fill(13), 18, 18]);
+        add('Ringkasan Bulanan', s5, [14, 26, 28, 20, 24]);
+        add('Per Departemen', s6, [22, 22, 20]);
+        add('Per Proyek', s7, [26, 22, 20]);
+        add('Asset & Depresiasi', s8, [32, 14, 26, 24, 22, 28, 24, 24, 14]);
+        add('Master COA GL', s9, [16, 34, 24, 22, 18, 16]);
+        return workbook;
+    }
+
+    // ==========================================================================
+    // DATA DARI / KE DATABASE
+    // ==========================================================================
+
+    const coaKey = period => `${COA_PREFIX}${period}`;
+    const cacheKeyFor = (table, period) => table === PROJECT_TABLE ? `smartbara_budget_site_v2_${period}` : `smartbara_budget_v2_${period}`;
+    const TABLE_LABELS = { planning: 'Creator Planning', account: 'Budget Akun', project: 'Budget Proyek' };
+
+    async function loadStoredCoa(period) {
+        try {
+            const client = window.SmartBaraCore.getClient();
+            if (client) {
+                const { data } = await client.from('smartbara_settings').select('value').eq('key', coaKey(period)).maybeSingle();
+                if (Array.isArray(data?.value?.rows)) return data.value.rows;
+            }
+            const cached = JSON.parse(localStorage.getItem(coaKey(period)) || 'null');
+            if (Array.isArray(cached?.rows)) return cached.rows;
+        } catch (e) { /* COA opsional */ }
+        return [];
+    }
+
+    async function saveCoa(period, rows, fileName) {
+        const value = { rows, saved_at: new Date().toISOString(), source: fileName };
+        try { localStorage.setItem(coaKey(period), JSON.stringify(value)); } catch (e) { /* cache opsional */ }
+        const client = window.SmartBaraCore.getClient();
+        const { error } = await client.from('smartbara_settings').upsert({ key: coaKey(period), value, updated_at: value.saved_at }, { onConflict: 'key' });
+        if (error) throw error;
+    }
+
+    function triggerDownload(blobParts, fileName, type) {
+        const blob = new Blob(blobParts, { type });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = fileName;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    // ---- Template ---------------------------------------------------------------
     async function downloadTemplate() {
-        setStatus('Menyiapkan template berstandar dengan opsi database...');
+        setStatus('Menyiapkan template (format Rekap Kebutuhan Item)...');
         try {
             await window.ensureLibrary('exceljs');
             const workbook = new ExcelJS.Workbook();
             workbook.creator = 'Smart BARA';
             const period = window.SmartBaraCore.getActivePeriod();
             const lists = getDatabaseLists();
+            const coa = await loadStoredCoa(period);
+            const LAST_ROW = 501;
 
-            // 1. Sheet Referensi
-            const refSheet = workbook.addWorksheet('Referensi', { state: 'visible' });
-            refSheet.views = [{ showGridLines: true }];
-            refSheet.columns = [
-                { header: 'Departemen', key: 'dept', width: 22 },
-                { header: 'Nama Akun', key: 'account', width: 34 },
-                { header: 'Nama Proyek UP', key: 'project', width: 34 },
-                { header: 'Prioritas', key: 'priority', width: 16 },
-                { header: 'Status', key: 'status', width: 16 },
-                { header: 'Satuan', key: 'unit', width: 16 }
+            const sheet = workbook.addWorksheet('Rekap Kebutuhan Item', { views: [{ state: 'frozen', ySplit: 1, showGridLines: true }] });
+            const columns = [
+                ['ID Budget', 15], ['Departemen', 18], ['Bulan', 8], ['No. Akun', 16], ['Nomor Sumber', 14], ['Nama Akun', 30], ['Tipe Akun', 14],
+                ['Identitas Asset', 14], ['Nama Proyek UP', 26], ['Nama Pelanggan/Pemasok', 20], ['Kebutuhan / Nama Barang', 34], ['Spesifikasi / Alasan', 34],
+                ['Jumlah', 10], ['Satuan', 10], ['Estimasi Harga Satuan (Rp)', 18], ['Prioritas', 11], ['Tanggal Dibutuhkan (YYYY-MM-DD)', 18],
+                ['Status', 12], ['Catatan Analisa', 32], ['Total Harga (Rp)', 18]
             ];
-            const refHeader = refSheet.getRow(1);
-            refHeader.height = 24;
-            refHeader.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-            refHeader.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
-            refHeader.alignment = { vertical: 'middle', horizontal: 'center' };
-
-            const maxRefRows = Math.max(
-                lists.departments.length, lists.accounts.length, lists.projects.length,
-                lists.priorities.length, lists.statuses.length, lists.units.length
-            );
-
-            for (let i = 0; i < maxRefRows; i++) {
-                refSheet.addRow([
-                    lists.departments[i] || '', lists.accounts[i] || '', lists.projects[i] || '',
-                    lists.priorities[i] || '', lists.statuses[i] || '', lists.units[i] || ''
-                ]);
-            }
-
-            // 2. Sheet Template Planning
-            const sheet = workbook.addWorksheet('Template Planning', {
-                views: [{ state: 'frozen', ySplit: 3, showGridLines: true }]
-            });
-
-            sheet.columns = [
-                { header: 'Departemen', key: 'dept', width: 20 },
-                { header: 'Nama Akun', key: 'account', width: 30 },
-                { header: 'Nama Proyek UP', key: 'project', width: 30 },
-                { header: 'Kebutuhan / Nama Barang', key: 'item', width: 34 },
-                { header: 'Spesifikasi / Alasan', key: 'specification', width: 44 },
-                { header: 'Jumlah', key: 'quantity', width: 12 },
-                { header: 'Satuan', key: 'unit', width: 14 },
-                { header: 'Estimasi Harga Satuan (Rp)', key: 'unitPrice', width: 25 },
-                { header: 'Prioritas', key: 'priority', width: 15 },
-                { header: 'Tanggal Dibutuhkan', key: 'neededBy', width: 22 },
-                { header: 'Status', key: 'status', width: 16 },
-                { header: 'Catatan Analisa', key: 'catatan', width: 52 }
-            ];
-
-            // Banner Row 1 & 2
-            sheet.mergeCells('A1:L1');
-            const titleCell = sheet.getCell('A1');
-            titleCell.value = 'SMART BARA - TEMPLATE PERENCANAAN BUDGET CREATOR';
-            titleCell.font = { bold: true, size: 13, color: { argb: 'FFFFFFFF' } };
-            titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F172A' } };
-            titleCell.alignment = { vertical: 'middle', horizontal: 'center' };
-            sheet.getRow(1).height = 28;
-
-            sheet.mergeCells('A2:L2');
-            const subCell = sheet.getCell('A2');
-            subCell.value = `Periode: ${period} | Pilih opsi dari combobox/dropdown standarisasi (Departemen, Akun, Proyek UP, Satuan, Prioritas, Status). Bisa juga diketik manual jika ada nama baru.`;
-            subCell.font = { italic: true, size: 9, color: { argb: 'FF334155' } };
-            subCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } };
-            subCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-            sheet.getRow(2).height = 22;
-
-            // Header Row 3
-            const headerRow = sheet.getRow(3);
-            headerRow.values = [
-                'Departemen', 'Nama Akun', 'Nama Proyek UP', 'Kebutuhan / Nama Barang', 'Spesifikasi / Alasan',
-                'Jumlah', 'Satuan', 'Estimasi Harga Satuan (Rp)', 'Prioritas', 'Tanggal Dibutuhkan (YYYY-MM-DD)', 'Status', 'Catatan Analisa'
-            ];
-            headerRow.height = 26;
+            sheet.columns = columns.map(([header, width]) => ({ header, width }));
+            const headerRow = sheet.getRow(1);
+            headerRow.height = 32;
             headerRow.font = { bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
             headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0D9488' } };
-            headerRow.alignment = { vertical: 'middle', horizontal: 'center' };
+            headerRow.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
 
-            // Baris isian terformat (minimal 1 baris referensi agar rentang validasi tetap sah)
-            const deptCount = Math.max(1, lists.departments.length);
-            const accCount = Math.max(1, lists.accounts.length);
-            const projCount = Math.max(1, lists.projects.length);
-
-            for (let r = 4; r <= TEMPLATE_LAST_ROW; r++) {
+            const list = (column, count) => ({ type: 'list', allowBlank: true, showErrorMessage: false, formulae: [`Referensi!$${column}$2:$${column}$${Math.max(count, 1) + 1}`] });
+            for (let r = 2; r <= LAST_ROW; r++) {
                 const row = sheet.getRow(r);
-                row.height = 22;
-                row.getCell(6).numFmt = '#,##0.##';
-                row.getCell(8).numFmt = '#,##0';
-                row.getCell(10).numFmt = 'yyyy-mm-dd';
+                row.getCell(13).numFmt = '#,##0.##';
+                row.getCell(15).numFmt = '#,##0';
+                row.getCell(17).numFmt = 'yyyy-mm-dd';
+                row.getCell(20).numFmt = '#,##0';
+                row.getCell(20).value = { formula: `M${r}*O${r}` };
+                row.getCell(2).dataValidation = list('A', lists.departments.length);
+                row.getCell(6).dataValidation = list('B', lists.accounts.length);
+                row.getCell(9).dataValidation = list('C', lists.projects.length);
+                row.getCell(14).dataValidation = list('F', lists.units.length);
+                row.getCell(16).dataValidation = list('D', lists.priorities.length);
+                row.getCell(18).dataValidation = list('E', lists.statuses.length);
+            }
+            sheet.autoFilter = { from: 'A1', to: `T${LAST_ROW}` };
 
-                // Data Validations referencing Referensi sheet
-                row.getCell(1).dataValidation = { type: 'list', allowBlank: true, showErrorMessage: false, formulae: [`Referensi!$A$2:$A$${deptCount + 1}`] };
-                row.getCell(2).dataValidation = { type: 'list', allowBlank: true, showErrorMessage: false, formulae: [`Referensi!$B$2:$B$${accCount + 1}`] };
-                row.getCell(3).dataValidation = { type: 'list', allowBlank: true, showErrorMessage: false, formulae: [`Referensi!$C$2:$C$${projCount + 1}`] };
-                row.getCell(7).dataValidation = { type: 'list', allowBlank: true, showErrorMessage: false, formulae: [`Referensi!$F$2:$F$${lists.units.length + 1}`] };
-                row.getCell(9).dataValidation = { type: 'list', allowBlank: true, showErrorMessage: false, formulae: [`Referensi!$D$2:$D$${lists.priorities.length + 1}`] };
-                row.getCell(11).dataValidation = { type: 'list', allowBlank: true, showErrorMessage: false, formulae: [`Referensi!$E$2:$E$${lists.statuses.length + 1}`] };
+            const refSheet = workbook.addWorksheet('Referensi');
+            refSheet.columns = [
+                { header: 'Departemen', width: 22 }, { header: 'Nama Akun', width: 34 }, { header: 'Nama Proyek UP', width: 34 },
+                { header: 'Prioritas', width: 16 }, { header: 'Status', width: 16 }, { header: 'Satuan', width: 16 }
+            ];
+            const maxRef = Math.max(lists.departments.length, lists.accounts.length, lists.projects.length, lists.priorities.length, lists.statuses.length, lists.units.length);
+            for (let i = 0; i < maxRef; i++) {
+                refSheet.addRow([lists.departments[i] || '', lists.accounts[i] || '', lists.projects[i] || '', lists.priorities[i] || '', lists.statuses[i] || '', lists.units[i] || '']);
+            }
+            refSheet.getRow(1).font = { bold: true };
+
+            if (coa.length) {
+                const coaSheet = workbook.addWorksheet('Master COA GL');
+                coaSheet.columns = [{ header: 'No. Akun', width: 16 }, { header: 'Nama Akun', width: 34 }, { header: 'Tipe Akun', width: 24 }, { header: 'Kategori', width: 22 }, { header: 'Aktif di Kuesioner', width: 18 }, { header: 'Sumber', width: 16 }];
+                coa.forEach(c => coaSheet.addRow([c.no, c.nama, c.tipe, c.kategori, c.aktif, c.sumber]));
+                coaSheet.getRow(1).font = { bold: true };
             }
 
-            sheet.autoFilter = { from: 'A3', to: `L${TEMPLATE_LAST_ROW}` };
+            const guide = workbook.addWorksheet('Petunjuk');
+            guide.getColumn(1).width = 110;
+            [
+                'PETUNJUK PENGISIAN — Smart BARA Budget Creator',
+                `Periode saat template dibuat: ${period}`,
+                '',
+                '1. Isi data di sheet "Rekap Kebutuhan Item". Satu baris = satu kebutuhan. Kolom wajib: Departemen, Kebutuhan / Nama Barang, Jumlah, Estimasi Harga Satuan.',
+                '2. ID Budget: kosongkan untuk baris baru. Isi dengan ID yang sama (mis. BG27-00001) bila ingin memperbarui baris yang sudah ada saat upload ulang.',
+                '3. Tanggal Dibutuhkan menentukan bulan anggaran. Jika kosong, kolom Bulan (01–12) dipakai.',
+                '4. No. Akun, Tipe Akun, Identitas Asset, dan Total Harga dihitung sistem / opsional; tidak perlu diisi manual.',
+                '5. Asset otomatis: akun Biaya Peralatan Kerja / Perlengkapan Kantor dengan harga satuan >= Rp 5.000.000 dihitung asset dan didepresiasi 5 tahun.',
+                '6. Upload file ini di Budget Creator > Import Excel. Budget Akun dan Budget Proyek per departemen dihitung otomatis dari baris ini.',
+                '7. File hasil Export Excel memakai format yang sama dan bisa diupload kembali.'
+            ].forEach(line => guide.addRow([line]));
+            guide.getRow(1).font = { bold: true, size: 13 };
 
             const buffer = await workbook.xlsx.writeBuffer();
-            const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `Budget_Creator_Planning_Template_${period}.xlsx`;
-            a.click();
-            setTimeout(() => URL.revokeObjectURL(url), 1000);
+            triggerDownload([buffer], `Template_Budget_Creator_${String(period).replace(/[^a-z0-9_-]+/gi, '_')}.xlsx`, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
             setStatus(`Template berhasil diunduh (${lists.departments.length} Dept, ${lists.accounts.length} Akun, ${lists.projects.length} Proyek).`);
-        } catch(err) {
+        } catch (err) {
             console.error('Download template error:', err);
             setStatus(`Download template gagal: ${err.message}`, true);
         }
     }
 
+    // ---- Export -------------------------------------------------------------------
     async function exportExcel() {
-        const rows = getFilteredItems();
+        const rows = [...items];
         if (!rows.length) {
             setStatus('Tidak ada data Budget Creator untuk diekspor.', true);
             return;
         }
-
         const period = window.SmartBaraCore.getActivePeriod();
-        const taskId = window.SmartBaraLayout.beginLoading('Mengekspor Budget Creator', `Menyiapkan ${rows.length} baris data...`);
+        const taskId = window.SmartBaraLayout.beginLoading('Mengekspor Budget Creator', `Menyusun 9 sheet dari ${rows.length.toLocaleString('id-ID')} baris...`);
         let exportSucceeded = false;
         try {
-            await window.ensureLibrary('exceljs');
-            const workbook = new ExcelJS.Workbook();
-            workbook.creator = 'Smart BARA';
-            workbook.company = 'Smart BARA';
-            workbook.subject = `Budget Creator Planning ${period}`;
-            workbook.title = `Budget Creator Planning ${period}`;
-            workbook.created = new Date();
-            workbook.modified = new Date();
-
-            const worksheet = workbook.addWorksheet('Budget Creator', {
-                views: [{ state: 'frozen', ySplit: 5, showGridLines: false }],
-                properties: { tabColor: { argb: 'FF0D9488' } }
-            });
-            worksheet.columns = [
-                { width: 7 }, { width: 20 }, { width: 30 }, { width: 28 }, { width: 38 },
-                { width: 44 }, { width: 52 }, { width: 19 }, { width: 14 }, { width: 13 },
-                { width: 22 }, { width: 22 }, { width: 16 }, { width: 18 }, { width: 34 }
-            ];
-
-            worksheet.mergeCells('A1:O1');
-            const title = worksheet.getCell('A1');
-            title.value = 'SMART BARA | BUDGET CREATOR PLANNING';
-            title.font = { bold: true, size: 16, color: { argb: 'FFFFFFFF' } };
-            title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F172A' } };
-            title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-            worksheet.getRow(1).height = 32;
-
-            worksheet.mergeCells('A2:O2');
-            const subtitle = worksheet.getCell('A2');
-            subtitle.value = `Periode ${period} | Diekspor ${new Date().toLocaleString('id-ID')} | ${rows.length.toLocaleString('id-ID')} baris`;
-            subtitle.font = { italic: true, size: 10, color: { argb: 'FF475569' } };
-            subtitle.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } };
-            subtitle.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-            worksheet.getRow(2).height = 23;
-
-            const totalAmount = rows.reduce((sum, item) => sum + (Number(item.quantity) || 0) * (Number(item.estimated_unit_price) || 0), 0);
-            const highPriority = rows.filter(item => item.priority === 'Tinggi').length;
-            const pending = rows.filter(item => item.status === 'Diajukan').length;
-            worksheet.getRow(4).values = ['Jumlah Baris', rows.length, 'Estimasi Total', totalAmount, 'Prioritas Tinggi', highPriority, 'Menunggu Persetujuan', pending];
-            worksheet.getRow(4).height = 25;
-            worksheet.getRow(4).font = { bold: true, color: { argb: 'FF0F172A' } };
-            worksheet.getRow(4).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2E8F0' } };
-            worksheet.getCell('D4').numFmt = '"Rp" #,##0;[Red]("Rp" #,##0)';
-            worksheet.getCell('D4').font = { bold: true, color: { argb: 'FF0D9488' } };
-
-            const headers = [
-                'No', 'Departemen', 'Nama Akun', 'Nama Proyek UP', 'Kebutuhan / Barang',
-                'Spesifikasi / Alasan', 'Catatan Analisa', 'Tanggal Dibutuhkan', 'Jumlah', 'Satuan',
-                'Harga Satuan (Rp)', 'Estimasi Total (Rp)', 'Prioritas', 'Status', 'ID Budget AI'
-            ];
-            worksheet.getRow(5).values = headers;
-            const header = worksheet.getRow(5);
-            header.height = 32;
-            header.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 10 };
-            header.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0D9488' } };
-            header.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
-
-            rows.forEach((item, index) => {
-                const neededBy = String(item.needed_by || '');
-                const parsedDate = /^\d{4}-\d{2}-\d{2}$/.test(neededBy) ? new Date(`${neededBy}T00:00:00`) : neededBy || '';
-                const quantity = Number(item.quantity) || 0;
-                const unitPrice = Number(item.estimated_unit_price) || 0;
-                const outputRow = worksheet.addRow([
-                    index + 1,
-                    item.department || '',
-                    item.account_name || '',
-                    item.project_name || '',
-                    item.item_name || '',
-                    item.specification || '',
-                    item.catatan || '',
-                    parsedDate,
-                    quantity,
-                    item.unit || '',
-                    unitPrice,
-                    quantity * unitPrice,
-                    item.priority || 'Normal',
-                    item.status || 'Draft',
-                    item.ai_budget_id || ''
-                ]);
-                outputRow.height = 22;
-                outputRow.alignment = { vertical: 'top', wrapText: true };
-                outputRow.getCell(1).alignment = { horizontal: 'center', vertical: 'top' };
-                outputRow.getCell(8).numFmt = 'dd mmm yyyy';
-                outputRow.getCell(9).numFmt = '#,##0.##';
-                [11, 12].forEach(column => { outputRow.getCell(column).numFmt = '"Rp" #,##0;[Red]("Rp" #,##0)'; });
-                if (index % 2 === 1) outputRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8FAFC' } };
-            });
-
-            const lastDataRow = worksheet.rowCount;
-            worksheet.autoFilter = { from: { row: 5, column: 1 }, to: { row: 5, column: headers.length } };
-            const footer = worksheet.addRow(['TOTAL', '', '', '', '', '', '', '', '', '', '', totalAmount, '', '', '']);
-            footer.height = 25;
-            footer.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-            footer.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F172A' } };
-            footer.getCell(12).numFmt = '"Rp" #,##0;[Red]("Rp" #,##0)';
-            footer.getCell(12).alignment = { horizontal: 'right' };
-            worksheet.pageSetup = { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0, printTitlesRow: '1:5' };
-            worksheet.autoFilter = { from: { row: 5, column: 1 }, to: { row: lastDataRow, column: headers.length } };
-
-            const buffer = await workbook.xlsx.writeBuffer();
-            const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-            const url = URL.createObjectURL(blob);
-            const link = document.createElement('a');
-            link.href = url;
-            link.download = `Budget_Creator_Planning_${String(period).replace(/[^a-z0-9_-]+/gi, '_')}.xlsx`;
-            document.body.appendChild(link);
-            link.click();
-            link.remove();
-            setTimeout(() => URL.revokeObjectURL(url), 1000);
-            setStatus(`Export Excel berhasil: ${rows.length.toLocaleString('id-ID')} baris.`);
+            await window.ensureLibrary('xlsx');
+            const coa = await loadStoredCoa(period);
+            const workbook = buildReportWorkbook(rows, period, coa);
+            const now = new Date();
+            const fileName = `Ringkasan_Budget_${String(period).replace(/[^a-z0-9_-]+/gi, '_')}_${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}.xlsx`;
+            XLSX.writeFile(workbook, fileName, { compression: true });
+            setStatus(`Export Excel berhasil: ${rows.length.toLocaleString('id-ID')} baris, 9 sheet (${fileName}).`);
             exportSucceeded = true;
-        } catch(error) {
+        } catch (error) {
             console.error('Export Budget Creator error:', error);
             setStatus(`Export Excel gagal: ${error.message}`, true);
         } finally {
@@ -2025,12 +2289,517 @@ window.BudgetCreatorModule = (function() {
         }
     }
 
+    async function fetchExistingPlanningRows(period) {
+        const client = window.SmartBaraCore.getClient();
+        if (!client) return Array.isArray(items) ? [...items] : [];
+        if (storageMode === 'settings') {
+            const { data } = await client.from('smartbara_settings').select('value').eq('key', `budget_creator_planning_${period}`).maybeSingle();
+            return Array.isArray(data?.value) ? data.value : [];
+        }
+        const { data, error } = await window.SmartBaraCore.fetchPeriodRows(TABLE_NAME, period, { orderBy: 'created_at', ascending: false });
+        if (error) throw error;
+        return data || [];
+    }
+
+    async function fetchTableRows(table, period) {
+        if (!window.SmartBaraCore.getClient()) return [];
+        const { data, error } = await window.SmartBaraCore.fetchPeriodRows(table, period);
+        if (error) throw error;
+        return data || [];
+    }
+
+
     // ==========================================================================
-    // IMPORT EXCEL: baca -> validasi -> tinjau -> simpan bulk
+    // IMPORT: MODE (periode baru | upsert | ganti semua) di atas dialog tinjau
     // ==========================================================================
+    function getImportMode() {
+        return document.querySelector('input[name="creatorImportMode"]:checked')?.value || 'new';
+    }
+
+    function initImportModes() {
+        const core = window.SmartBaraCore;
+        const cloud = core.canWriteCloud();
+        const section = document.getElementById('creatorImportModes');
+        if (section) section.classList.toggle('hidden', !cloud);
+        if (!cloud) return;
+        const canCreatePeriod = core.canManageSettings();
+        const allowed = { new: canCreatePeriod, upsert: true, replace: core.canDeleteData() };
+        Object.entries(allowed).forEach(([mode, ok]) => {
+            const radio = document.querySelector(`input[name="creatorImportMode"][value="${mode}"]`);
+            if (!radio) return;
+            radio.disabled = !ok;
+            radio.closest('label')?.classList.toggle('opacity-40', !ok);
+        });
+        document.querySelector(`input[name="creatorImportMode"][value="${canCreatePeriod ? 'new' : 'upsert'}"]`).checked = true;
+        document.getElementById('creatorImportPeriodName').value = guessImportPeriodName(pendingImport.entries.map(e => e.data));
+        document.getElementById('creatorImportStatus').textContent = '';
+    }
+
+    function updateImportConfirmButton(count) {
+        const button = document.getElementById('creatorImportConfirmButton');
+        if (!button) return;
+        const fmt = value => value.toLocaleString('id-ID');
+        if (!window.SmartBaraCore.canWriteCloud()) {
+            button.disabled = !count;
+            button.textContent = count ? `Simpan ${fmt(count)} baris (lokal)` : 'Tidak ada baris valid';
+            return;
+        }
+        const mode = getImportMode();
+        const ready = mode === 'new' || Boolean(importPlanCache && importPlanCache.mode === mode);
+        const label = mode === 'new' ? 'Buat Periode & Import' : mode === 'upsert' ? 'Upsert ke Periode' : 'Ganti Seluruh Periode';
+        button.disabled = !count || !ready || importBusy;
+        button.textContent = count ? `${label} (${fmt(count)} baris)` : 'Tidak ada baris valid';
+        button.classList.toggle('bg-rose-600', mode === 'replace');
+    }
+
+    async function captureState(period) {
+        const [planning, account, project] = await Promise.all([
+            fetchExistingPlanningRows(period), fetchTableRows(ACCOUNT_TABLE, period), fetchTableRows(PROJECT_TABLE, period)
+        ]);
+        return { planning, account, project };
+    }
+
+    function buildAllPlans(state, mode, period, rows, derived) {
+        return {
+            planning: buildImportPlan(rows, state.planning, mode, period),
+            account: buildTablePlan(derived.accounts, state.account, mode, period, 'nama_akun'),
+            project: buildTablePlan(derived.projects, state.project, mode, period, 'nama_proyek_up')
+        };
+    }
+
+    function renderImportPlan(plans, state, mode, period, ctx) {
+        const esc = window.Formatters.escapeHtml;
+        const n = value => value.toLocaleString('id-ID');
+        const tableRows = Object.keys(TABLE_LABELS).map(key => {
+            const s = plans[key].stats;
+            return `<tr class="border-t border-white/10">
+                <td class="py-1.5 pr-2 text-slate-200">${TABLE_LABELS[key]}</td>
+                <td class="py-1.5 text-right text-slate-400">${n(state[key].length)}</td>
+                <td class="py-1.5 text-right font-bold text-emerald-300">${n(s.created)}</td>
+                <td class="py-1.5 text-right font-bold text-sky-300">${n(s.updated)}</td>
+                <td class="py-1.5 text-right text-slate-300">${n(s.unchanged)}</td>
+                <td class="py-1.5 text-right font-bold ${s.removed ? 'text-rose-300' : 'text-slate-300'}">${n(s.removed)}</td>
+            </tr>`;
+        }).join('');
+
+        const { checkResults, derived, coaEffective, rows } = ctx;
+        const checksHtml = checkResults.map(c => `<li class="${c.ok === false ? 'text-rose-300' : c.ok ? 'text-emerald-300' : 'text-slate-400'}">${c.ok === false ? '✖' : c.ok ? '✔' : '–'} ${esc(c.label)}: ${esc(c.detail)}</li>`).join('');
+        const warnings = [];
+        const skipped = pendingImport.entries.length - rows.length;
+        if (skipped) warnings.push(`${skipped} baris error dilewati${mode === 'replace' ? ' — pada mode Ganti semua, data lama yang cocok dengan baris itu ikut terhapus' : ''}.`);
+        if (derived.warnings.withoutMonth) warnings.push(`${derived.warnings.withoutMonth} baris tanpa tanggal/bulan dihitung ke Januari.`);
+        if (derived.warnings.withoutAccount) warnings.push(`${derived.warnings.withoutAccount} baris tanpa nama akun tidak masuk Budget Akun.`);
+        if (derived.warnings.withoutProject) warnings.push(`${derived.warnings.withoutProject} baris tanpa proyek tidak masuk Budget Proyek.`);
+        if (coaEffective?.length) {
+            const known = new Set(coaEffective.map(c => lc(c.nama)));
+            const unknown = [...new Set(rows.map(r => r.account_name).filter(a => a && !known.has(lc(a))))];
+            if (unknown.length) warnings.push(`${unknown.length} nama akun tidak ada di Master COA: ${unknown.slice(0, 3).join(', ')}${unknown.length > 3 ? '…' : ''}`);
+        }
+        const depTotal = sumOf(derived.depMonthly);
+        const hasExisting = hasAnyRows(state);
+        return `
+            <p class="m-0 mb-2 text-xs text-slate-300">${mode === 'new'
+                ? `Periode <strong>${esc(period)}</strong> dibuat kosong, lalu diisi dari file. Data periode lain tidak disentuh.`
+                : `Periode <strong>${esc(period)}</strong> saat ini sudah berisi data.`}</p>
+            <table class="w-full text-xs">
+                <thead><tr class="text-left text-slate-400"><th class="pb-1 font-semibold">Tabel</th><th class="pb-1 text-right font-semibold">Sekarang</th><th class="pb-1 text-right font-semibold">Baru</th><th class="pb-1 text-right font-semibold">Diperbarui</th><th class="pb-1 text-right font-semibold">Sama</th><th class="pb-1 text-right font-semibold">Dihapus</th></tr></thead>
+                <tbody>${tableRows}</tbody>
+            </table>
+            <p class="mb-0 mt-2 text-[11px] text-slate-400">Budget Akun &amp; Budget Proyek dihitung dari item per departemen${depTotal ? `, termasuk depresiasi asset Rp ${Math.round(depTotal / 12).toLocaleString('id-ID')}/bulan` : ''}.</p>
+            <p class="mb-1 mt-3 text-xs font-bold text-slate-300">Cocokkan dengan sheet rekap di file</p>
+            <ul class="m-0 list-none space-y-0.5 p-0 text-xs">${checksHtml}</ul>
+            ${warnings.length ? `<ul class="mb-0 mt-3 list-disc space-y-0.5 pl-4 text-xs text-amber-300">${warnings.map(w => `<li>${esc(w)}</li>`).join('')}</ul>` : ''}
+            ${hasExisting ? '<p class="mb-0 mt-3 text-xs text-amber-300">Sebelum database diubah, data lama periode ini otomatis dibackup: snapshot di database (5 terbaru dipertahankan) dan file unduhan.</p>' : ''}
+            ${mode === 'replace' ? '<p class="mb-0 mt-2 text-xs text-rose-300">Baris di database yang tidak ada di file akan dihapus dari ketiga tabel.</p>' : mode === 'upsert' ? '<p class="mb-0 mt-2 text-xs text-slate-400">Baris di database yang tidak ada di file dibiarkan.</p>' : ''}`;
+    }
+
+    async function refreshImportPlan() {
+        if (!pendingImport || !window.SmartBaraCore.canWriteCloud()) return;
+        const mode = getImportMode();
+        const planEl = document.getElementById('creatorImportPlan');
+        const activePeriod = window.SmartBaraCore.getActivePeriod();
+        document.getElementById('creatorImportNewPeriodWrap').classList.toggle('hidden', mode !== 'new');
+        document.getElementById('creatorImportTargetWrap').classList.toggle('hidden', mode === 'new');
+        document.getElementById('creatorImportTargetPeriod').textContent = activePeriod;
+        importPlanCache = null;
+        const rows = getImportSelection().map(entry => entry.data);
+        updateImportConfirmButton(rows.length);
+        if (!rows.length) { planEl.innerHTML = ''; return; }
+
+        const derived = computeDerived(rows);
+        const checkResults = verifyAgainstFile(derived, rows, pendingImport.checks || {});
+        const coaEffective = pendingImport.coa || await loadStoredCoa(activePeriod);
+        const ctx = { rows, derived, checkResults, coaEffective };
+
+        if (mode === 'new') {
+            const state = { planning: [], account: [], project: [] };
+            const typed = document.getElementById('creatorImportPeriodName').value.trim() || 'periode baru';
+            planEl.innerHTML = renderImportPlan(buildAllPlans(state, 'new', typed, rows, derived), state, 'new', typed, ctx);
+            updateImportConfirmButton(rows.length);
+            return;
+        }
+
+        planEl.innerHTML = '<p class="m-0 text-xs text-slate-400">Menghitung perbandingan dengan data di database...</p>';
+        try {
+            const state = await captureState(activePeriod);
+            if (getImportMode() !== mode || !pendingImport) return;
+            const plans = buildAllPlans(state, mode, activePeriod, rows, derived);
+            importPlanCache = { mode, period: activePeriod, state, plans, ctx };
+            planEl.innerHTML = renderImportPlan(plans, state, mode, activePeriod, ctx);
+            updateImportConfirmButton(rows.length);
+        } catch (err) {
+            planEl.innerHTML = `<p class="m-0 text-xs text-rose-300">Gagal membaca data periode: ${window.Formatters.escapeHtml(err.message)}</p>`;
+        }
+    }
+
+    // Hapus baris planning yang tidak ada lagi di file (mode Ganti semua / pulihkan).
+    async function removePlanningRows(period, removeRows) {
+        if (!removeRows.length) return;
+        const core = window.SmartBaraCore;
+        const ids = new Set(removeRows.map(r => String(r.id)));
+        if (storageMode === 'settings') {
+            items = items.filter(item => !ids.has(String(item.id)));
+            persistLocal(period);
+            await core.syncVersionedRow('smartbara_settings', period, { key: getCacheKey(period) }, { value: items }, 'budgetCreatorFallback', 'Import Budget Creator');
+        } else {
+            const client = core.getClient();
+            const list = [...ids];
+            for (let offset = 0; offset < list.length; offset += 100) {
+                const { error } = await client.from(TABLE_NAME).delete().eq('period_name', period).in('id', list.slice(offset, offset + 100));
+                if (error) throw error;
+            }
+            items = items.filter(item => !ids.has(String(item.id)));
+            persistLocal(period);
+        }
+        renderTable();
+    }
+
+    async function confirmImport() {
+        if (!pendingImport || bulkOperationInProgress || importBusy) return;
+        const core = window.SmartBaraCore;
+        const selection = getImportSelection();
+        const rows = selection.map(entry => entry.data);
+        if (!rows.length) return;
+
+        // Tanpa koneksi cloud: perilaku lama (simpan lokal, lewati duplikat).
+        if (!core.canWriteCloud()) {
+            const fresh = selection.filter(entry => !entry.duplicateOfExisting).map(entry => entry.data);
+            const skipped = pendingImport.entries.length - fresh.length;
+            closeImportReview();
+            const result = await commitRows(fresh, { title: 'Mengimpor Excel Budget Creator', label: 'Budget Creator Import' });
+            setStatus(`Import: ${describeCommitResult(result)}${skipped ? ` · ${skipped.toLocaleString('id-ID')} dilewati (error/duplikat)` : ''}.`, Boolean(result.failed.length));
+            return;
+        }
+
+        const mode = getImportMode();
+        const statusEl = document.getElementById('creatorImportStatus');
+        const say = (msg, isError = false) => {
+            statusEl.textContent = msg;
+            statusEl.className = `min-w-0 flex-1 break-words text-xs font-semibold ${isError ? 'text-rose-400' : 'text-slate-400'}`;
+        };
+        if (mode === 'new' && !core.canManageSettings()) { say('Hanya superadmin yang dapat membuat periode baru.', true); return; }
+        if (mode === 'replace' && !core.canDeleteData()) { say('Mode ganti semua hanya untuk superadmin/spv.', true); return; }
+
+        let period = core.getActivePeriod();
+        let state = { planning: [], account: [], project: [] };
+        let plans;
+        let ctx;
+        let newPeriodName = '';
+
+        if (mode === 'new') {
+            newPeriodName = document.getElementById('creatorImportPeriodName').value.trim().replace(/\s+/g, ' ');
+            if (!/^[\w -]{2,40}$/.test(newPeriodName) || !/\d{4}/.test(newPeriodName)) {
+                say('Nama periode 2–40 karakter (huruf, angka, spasi, strip) dan harus memuat tahun, mis. GMI-BUDGET 2027.', true);
+                return;
+            }
+            if ((core.getAvailablePeriods() || []).some(name => String(name).toLowerCase() === newPeriodName.toLowerCase())) {
+                say(`Periode "${newPeriodName}" sudah ada. Pilih nama lain, atau gunakan mode Upsert / Ganti semua pada periode itu.`, true);
+                return;
+            }
+            const derived = computeDerived(rows);
+            ctx = { rows, derived };
+        } else {
+            if (!importPlanCache || importPlanCache.mode !== mode || importPlanCache.period !== period) { say('Rencana import belum siap. Tunggu perhitungan selesai.', true); return; }
+            ({ state, plans, ctx } = importPlanCache);
+            if (mode === 'replace') {
+                const removed = Object.keys(TABLE_LABELS).map(k => `${TABLE_LABELS[k]}: ${plans[k].stats.removed} dihapus, ${plans[k].stats.created} baru, ${plans[k].stats.updated} diperbarui`).join('\n• ');
+                if (!confirm(`GANTI SELURUH PERIODE "${period}"?\n\n• ${removed}\n\nData lama dibackup lebih dulu (database + file).`)) return;
+            }
+        }
+
+        importBusy = true;
+        updateImportConfirmButton(rows.length);
+        const taskId = window.SmartBaraLayout.beginLoading('Import Excel', 'Menyiapkan import...');
+        let succeeded = false;
+        try {
+            // 1) Backup data lama (wajib; gagal = batal sebelum database disentuh)
+            if (mode !== 'new' && hasAnyRows(state)) {
+                say('Menyimpan backup data lama (database + file)...');
+                const backup = await backupBeforeChange(state, period, mode === 'replace' ? 'ganti-semua' : 'upsert');
+                say(backup.fileName ? `Backup tersimpan di database dan diunduh: ${backup.fileName}` : 'Backup tersimpan di database (unduhan file gagal).');
+            }
+
+            // 2) Buat periode baru bila perlu
+            if (mode === 'new') {
+                say(`Membuat periode ${newPeriodName}...`);
+                period = await core.addPeriod(newPeriodName);
+                items = [];   // buang sisa data periode sebelumnya sebelum menyimpan
+                plans = buildAllPlans(state, 'new', period, ctx.rows, ctx.derived);
+            }
+
+            // 3) Planning (pakai penyimpanan massal bawaan: per chunk, retry, antrean)
+            say(`Menyimpan ${plans.planning.toWrite.length.toLocaleString('id-ID')} baris Creator Planning...`);
+            const result = await commitRows(plans.planning.toWrite, { title: 'Mengimpor Excel Budget Creator', label: 'Budget Creator Import' });
+            if (result.failed.length || result.queued.length) throw new Error(describeCommitResult(result));
+            await removePlanningRows(period, plans.planning.toRemove);
+
+            // 4) Budget akun, budget proyek, lalu Master COA
+            say(`Menyimpan Budget Akun (${plans.account.toWrite.length}) dan Budget Proyek (${plans.project.toWrite.length})...`);
+            await writeTablePlan(ACCOUNT_TABLE, period, plans.account, 'Import Budget Akun');
+            cacheBudgetRows(ACCOUNT_TABLE, period, mergeAfterPlan(state.account, plans.account));
+            await writeTablePlan(PROJECT_TABLE, period, plans.project, 'Import Budget Proyek');
+            cacheBudgetRows(PROJECT_TABLE, period, mergeAfterPlan(state.project, plans.project));
+
+            let coaNote = '';
+            if (pendingImport.coa?.length) {
+                try { await saveCoa(period, pendingImport.coa, pendingImport.fileName); coaNote = ` Master COA ${pendingImport.coa.length} akun disimpan.`; }
+                catch (err) { coaNote = ` (Master COA gagal disimpan: ${err.message})`; }
+            }
+            succeeded = true;
+
+            const part = key => `${plans[key].stats.created} baru/${plans[key].stats.updated} diperbarui/${plans[key].stats.removed} dihapus`;
+            const msg = `Import selesai ke periode ${period} — Planning ${part('planning')}; Budget Akun ${part('account')}; Budget Proyek ${part('project')}.${coaNote}`;
+            importBusy = false;
+            closeImportReview();
+            setStatus(msg);
+            await loadData(true);
+            loadReferenceOptions();
+        } catch (err) {
+            console.error('Import Excel error:', err);
+            say(`Import gagal: ${err.message}${mode !== 'new' && hasAnyRows(state) ? ' Data lama aman di backup (database dan file unduhan); sebagian tabel mungkin sudah terisi — gunakan Pulihkan Backup bila perlu.' : ''}`, true);
+        } finally {
+            importBusy = false;
+            window.SmartBaraLayout.endLoading(taskId, succeeded);
+            if (pendingImport) updateImportConfirmButton(rows.length);
+        }
+    }
+
+    // ---- Backup -----------------------------------------------------------------------
+    const BACKUP_PREFIX = 'budget_creator_planning_backup__';   // harus berawalan budget_creator_planning_ (RLS spv/tim)
+    const BACKUP_KEEP = 5;
+
+    const hasAnyRows = state => Boolean(state.planning.length || state.account.length || state.project.length);
+
+    function downloadPlanningBackup(state, period, modeLabel) {
+        const now = new Date();
+        const stamp = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}_${pad2(now.getHours())}${pad2(now.getMinutes())}`;
+        const fileName = `Backup_BudgetCreator_${String(period).replace(/[^a-z0-9_-]+/gi, '_')}_sebelum-${modeLabel}_${stamp}.xlsx`;
+        const header = ['Departemen', 'Nama Akun', 'Nama Proyek UP', 'Kebutuhan / Nama Barang', 'Spesifikasi / Alasan', 'Catatan Analisa', 'Tanggal Dibutuhkan', 'Jumlah', 'Satuan', 'Harga Satuan (Rp)', 'Prioritas', 'Status', 'ID Budget AI', 'ID Internal', 'Dibuat', 'Diubah'];
+        const data = state.planning.map(r => [
+            r.department || '', r.account_name || '', r.project_name || '', r.item_name || '', r.specification || '', r.catatan || '',
+            r.needed_by ? String(r.needed_by).slice(0, 10) : '', Number(r.quantity) || 0, r.unit || '', Number(r.estimated_unit_price) || 0,
+            r.priority || 'Normal', r.status || 'Draft', r.ai_budget_id || '', r.id || '', r.created_at || '', r.updated_at || ''
+        ]);
+        const budgetSheet = (rows, nameField) => [['Departemen', 'Nama', ...MONTH_SHORT], ...rows.map(r => [r.departemen ?? r.dept ?? '', r[nameField] ?? r.nama ?? '', ...MONTH_SHORT.map((_, i) => Number((r.budget || [])[i]) || 0)])];
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([header, ...data]), 'Backup Planning');
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(budgetSheet(state.account, 'nama_akun')), 'Budget Akun');
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(budgetSheet(state.project, 'nama_proyek_up')), 'Budget Proyek');
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
+            ['Backup otomatis sebelum import Excel'], ['Periode', period], ['Mode import', modeLabel], ['Waktu backup', now.toLocaleString('id-ID')],
+            ['Baris planning', state.planning.length], ['Baris budget akun', state.account.length], ['Baris budget proyek', state.project.length]
+        ]), 'Info Backup');
+        XLSX.writeFile(wb, fileName, { compression: true });
+        return fileName;
+    }
+
+    function snapshotStamp(date = new Date()) {
+        return `${date.getFullYear()}${pad2(date.getMonth() + 1)}${pad2(date.getDate())}T${pad2(date.getHours())}${pad2(date.getMinutes())}${pad2(date.getSeconds())}`;
+    }
+
+    function parseSnapshotKey(key, period) {
+        const head = `${BACKUP_PREFIX}${period}__`;
+        if (!String(key).startsWith(head)) return null;
+        const [stamp, count] = String(key).slice(head.length).split('__');
+        const m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})$/.exec(stamp || '');
+        if (!m) return null;
+        return { key, stamp, count: Number(count) || 0, date: new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]) };
+    }
+
+    async function listSnapshots(period) {
+        const client = window.SmartBaraCore.getClient();
+        if (!client) return [];
+        const { data, error } = await client.from('smartbara_settings').select('key').like('key', `${BACKUP_PREFIX}%`);
+        if (error) throw error;
+        return (data || []).map(r => parseSnapshotKey(r.key, period)).filter(Boolean).sort((a, b) => b.stamp.localeCompare(a.stamp));
+    }
+
+    async function saveSnapshot(state, period, modeLabel) {
+        const client = window.SmartBaraCore.getClient();
+        if (!client) throw new Error('Cloud belum siap untuk menyimpan snapshot backup.');
+        const key = `${BACKUP_PREFIX}${period}__${snapshotStamp()}__${state.planning.length}`;
+        const now = new Date().toISOString();
+        const { error } = await client.from('smartbara_settings').insert({
+            key,
+            value: { period, mode: modeLabel, saved_at: now, count: state.planning.length, rows: state.planning, budget_rows: state.account, site_rows: state.project },
+            updated_at: now
+        });
+        if (error) throw new Error(`Snapshot backup gagal disimpan: ${error.message}`);
+        try {   // sisakan BACKUP_KEEP terbaru; gagal hapus tidak membatalkan import
+            const old = (await listSnapshots(period)).slice(BACKUP_KEEP);
+            if (old.length) await client.from('smartbara_settings').delete().in('key', old.map(o => o.key));
+        } catch (err) {
+            console.warn('Pembersihan snapshot lama gagal:', err);
+        }
+        return key;
+    }
+
+    // Snapshot di database wajib berhasil; file unduhan menyusul (gagal = hanya peringatan).
+    async function backupBeforeChange(state, period, modeLabel) {
+        const snapshotKey = await saveSnapshot(state, period, modeLabel);
+        let fileName = '';
+        try { fileName = downloadPlanningBackup(state, period, modeLabel); }
+        catch (err) { console.warn('Unduh file backup gagal:', err); }
+        return { snapshotKey, fileName };
+    }
+
+    // ---- Menulis ke database ------------------------------------------------------------
+    async function writeTablePlan(table, period, plan, label) {
+        const core = window.SmartBaraCore;
+        if (plan.toWrite.length) {
+            await core.syncCloudUpsert(table, plan.toWrite, 'id', `import:${table}:${period}:${Date.now()}`, label, { queueOnFailure: false });
+        }
+        if (plan.toRemove.length) {
+            const client = core.getClient();
+            for (let offset = 0; offset < plan.toRemove.length; offset += 100) {
+                const ids = plan.toRemove.slice(offset, offset + 100).map(r => r.id);
+                const { error } = await client.from(table).delete().eq('period_name', period).in('id', ids);
+                if (error) throw error;
+            }
+        }
+    }
+
+    function mergeAfterPlan(existing, plan) {
+        const removed = new Set(plan.toRemove.map(r => r.id));
+        const written = new Set(plan.toWrite.map(r => r.id));
+        return [...plan.toWrite, ...existing.filter(r => !written.has(r.id) && !removed.has(r.id))];
+    }
+
+    function cacheBudgetRows(table, period, rows) {
+        const normalized = rows.map(r => ({
+            id: r.id, period_name: period, nama: r.nama_akun ?? r.nama_proyek_up ?? r.nama ?? '', dept: r.departemen ?? r.dept ?? 'UMUM',
+            budget: Array.isArray(r.budget) ? r.budget : emptyMonths(), created_at: r.created_at, updated_at: r.updated_at
+        }));
+        try { localStorage.setItem(cacheKeyFor(table, period), JSON.stringify(normalized)); } catch (e) { /* cache opsional */ }
+    }
+
+    // ---- Pulihkan backup -------------------------------------------------------------------
+    async function openBackupDialog() {
+        const modal = document.getElementById('creatorBackupModal');
+        modal.classList.remove('hidden');
+        modal.classList.add('flex');
+        requestAnimationFrame(() => modal.classList.remove('opacity-0'));
+        document.getElementById('creatorBackupStatus').textContent = '';
+        await renderBackupList();
+    }
+
+    function closeBackupDialog() {
+        if (importBusy) return;
+        const modal = document.getElementById('creatorBackupModal');
+        modal.classList.add('opacity-0');
+        setTimeout(() => { modal.classList.add('hidden'); modal.classList.remove('flex'); }, 200);
+    }
+
+    async function renderBackupList() {
+        const period = window.SmartBaraCore.getActivePeriod();
+        const listEl = document.getElementById('creatorBackupList');
+        const esc = window.Formatters.escapeHtml;
+        document.getElementById('creatorBackupPeriod').textContent = period;
+        listEl.innerHTML = '<p class="m-0 text-xs text-slate-400">Memuat daftar backup...</p>';
+        try {
+            const snaps = await listSnapshots(period);
+            if (!snaps.length) {
+                listEl.innerHTML = '<p class="m-0 text-xs text-slate-400">Belum ada backup untuk periode ini. Backup dibuat otomatis sebelum import mode Upsert atau Ganti semua.</p>';
+                return;
+            }
+            const canRestore = window.SmartBaraCore.canDeleteData();
+            listEl.innerHTML = snaps.map(s => `
+                <div class="flex items-center justify-between gap-3 rounded-lg border border-white/10 p-3">
+                    <div class="text-sm text-slate-200">${esc(s.date.toLocaleString('id-ID'))}<br><span class="text-xs text-slate-400">${s.count.toLocaleString('id-ID')} baris planning</span></div>
+                    <button type="button" class="btn btn-secondary text-xs" ${canRestore ? '' : 'disabled title="Hanya superadmin/spv"'} data-restore-key="${esc(s.key)}">Pulihkan</button>
+                </div>`).join('');
+            listEl.querySelectorAll('[data-restore-key]').forEach(btn => btn.addEventListener('click', () => restoreSnapshot(btn.dataset.restoreKey)));
+        } catch (err) {
+            listEl.innerHTML = `<p class="m-0 text-xs text-rose-300">Gagal memuat backup: ${esc(err.message)}</p>`;
+        }
+    }
+
+    async function restoreSnapshot(key) {
+        const core = window.SmartBaraCore;
+        const statusEl = document.getElementById('creatorBackupStatus');
+        const say = (msg, isError = false) => {
+            statusEl.textContent = msg;
+            statusEl.className = `min-w-0 flex-1 break-words text-xs font-semibold ${isError ? 'text-rose-400' : 'text-slate-400'}`;
+        };
+        if (importBusy || bulkOperationInProgress) return;
+        if (!core.canDeleteData() || !core.canWriteCloud()) { say('Pemulihan hanya untuk superadmin/spv dengan koneksi cloud.', true); return; }
+        const period = core.getActivePeriod();
+        const meta = parseSnapshotKey(key, period);
+        if (!meta) { say('Backup tidak cocok dengan periode aktif.', true); return; }
+        if (!confirm(`PULIHKAN periode "${period}" ke backup ${meta.date.toLocaleString('id-ID')} (${meta.count} baris planning)?\n\nIsi periode saat ini akan diganti. Kondisi saat ini dibackup lebih dulu.`)) return;
+
+        importBusy = true;
+        const taskId = window.SmartBaraLayout.beginLoading('Pulihkan backup', 'Membaca backup...');
+        let succeeded = false;
+        try {
+            const { data, error } = await core.getClient().from('smartbara_settings').select('value').eq('key', key).maybeSingle();
+            if (error) throw error;
+            const snapshot = data?.value;
+            if (!Array.isArray(snapshot?.rows)) throw new Error('Isi backup tidak ditemukan atau rusak.');
+
+            say('Membackup kondisi saat ini...');
+            const current = await captureState(period);
+            if (hasAnyRows(current)) await backupBeforeChange(current, period, 'pulihkan');
+
+            const now = new Date().toISOString();
+            const restorePlan = (rows, existing) => {
+                const toWrite = rows.map(r => ({ ...r, period_name: period, created_at: r.created_at || now, updated_at: now }));
+                const keep = new Set(toWrite.map(r => r.id));
+                return { toWrite, toRemove: existing.filter(r => !keep.has(r.id)) };
+            };
+
+            say(`Memulihkan ${snapshot.rows.length.toLocaleString('id-ID')} baris planning...`);
+            const planningPlan = restorePlan(snapshot.rows, current.planning);
+            const result = await commitRows(planningPlan.toWrite, { title: 'Memulihkan backup Budget Creator', label: 'Pulihkan backup' });
+            if (result.failed.length || result.queued.length) throw new Error(describeCommitResult(result));
+            await removePlanningRows(period, planningPlan.toRemove);
+
+            const tableSets = [[ACCOUNT_TABLE, snapshot.budget_rows, current.account], [PROJECT_TABLE, snapshot.site_rows, current.project]];
+            for (const [table, rows, existing] of tableSets) {
+                if (!Array.isArray(rows)) continue;   // backup lama tanpa data budget
+                const plan = restorePlan(rows, existing);
+                await writeTablePlan(table, period, plan, 'Pulihkan backup');
+                cacheBudgetRows(table, period, mergeAfterPlan(existing, plan));
+            }
+            succeeded = true;
+            say(`Pemulihan selesai: ${snapshot.rows.length} baris planning dipulihkan.`);
+            await renderBackupList();
+            await loadData(true);
+            loadReferenceOptions();
+        } catch (err) {
+            console.error('Restore backup error:', err);
+            say(`Pemulihan gagal: ${err.message}`, true);
+        } finally {
+            importBusy = false;
+            window.SmartBaraLayout.endLoading(taskId, succeeded);
+        }
+    }
+
+
     function pickSheetName(workbook) {
         const candidates = workbook.SheetNames.filter(name => !/referensi/i.test(name));
-        return candidates.find(name => /template|plan|budget|kebutuhan/i.test(name)) || candidates[0] || workbook.SheetNames[0];
+        return candidates.find(name => /rekap kebutuhan/i.test(name))
+            || candidates.find(name => /template|plan|budget|kebutuhan/i.test(name)) || candidates[0] || workbook.SheetNames[0];
     }
 
     function detectHeaderRow(json) {
@@ -2064,7 +2833,7 @@ window.BudgetCreatorModule = (function() {
         const col = {};
         col.unitPrice = pick(['estimasi harga satuan (rp)', 'estimasi harga satuan', 'harga satuan (rp)', 'harga satuan', 'unit price']);
         col.total = pick(['estimasi total (rp)', 'estimasi total']);
-        col.aiBudgetId = pick(['id budget ai', 'ai budget id']);
+        col.aiBudgetId = pick(['id budget ai', 'ai budget id', 'id budget']);
         col.department = pick(['departemen', 'department', 'dept']);
         col.account = pick(['nama akun', 'akun', 'account']);
         col.project = pick(['nama proyek up', 'nama proyek', 'proyek up', 'proyek', 'project']);
@@ -2076,6 +2845,7 @@ window.BudgetCreatorModule = (function() {
         col.unit = pick(['satuan', 'unit']);
         col.priority = pick(['prioritas', 'priority']);
         col.status = pick(['status']);
+        col.month = header.findIndex((cell, i) => !used.has(i) && cell === 'bulan');
         return col;
     }
 
@@ -2153,6 +2923,7 @@ window.BudgetCreatorModule = (function() {
             const rawDate = getCell(row, col.neededBy);
             const neededBy = window.Formatters.normalizeDate(rawDate);
             if (!isBlank(rawDate) && !neededBy) warnings.push(`Tanggal "${String(rawDate)}" tidak terbaca, dikosongkan.`);
+            const monthOnly = !neededBy && isBlank(rawDate) ? Number(text(row, col.month)) : 0;
 
             const rawPriority = text(row, col.priority);
             const priority = PRIORITIES.find(p => p.toLowerCase() === rawPriority.toLowerCase()) || 'Normal';
@@ -2187,14 +2958,20 @@ window.BudgetCreatorModule = (function() {
                 updated_at: now
             };
 
+            if (monthOnly >= 1 && monthOnly <= 12) data._month = monthOnly;
             const fingerprint = getRowFingerprint(data);
             const duplicateOfExisting = existingFingerprints.has(fingerprint);
-            if (duplicateOfExisting) warnings.push('Sama persis dengan data yang sudah ada di database.');
             if (fileFingerprints.has(fingerprint)) warnings.push(`Sama persis dengan baris ${fileFingerprints.get(fingerprint)} di file ini.`);
             else fileFingerprints.set(fingerprint, rowNumber);
 
             entries.push({ rowNumber, data, errors, warnings, duplicateOfExisting });
         }
+        // Baris yang hanya punya kolom Bulan: tanggal 1 pada tahun yang dominan di file.
+        const monthYear = guessYear(entries.map(entry => entry.data), period);
+        entries.forEach(entry => {
+            if (entry.data._month) entry.data.needed_by = `${monthYear}-${pad2(entry.data._month)}-01`;
+            delete entry.data._month;
+        });
         return entries;
     }
 
@@ -2227,7 +3004,7 @@ window.BudgetCreatorModule = (function() {
             const entries = parseImportSheet(json);
             if (!entries.length) throw new Error('Tidak ada baris kebutuhan yang terbaca di file.');
             if (entries.length > MAX_IMPORT_ROWS) throw new Error(`File berisi ${entries.length.toLocaleString('id-ID')} baris; maksimal ${MAX_IMPORT_ROWS.toLocaleString('id-ID')} per upload. Pecah file menjadi beberapa bagian.`);
-            pendingImport = { fileName: file.name, sheetName, entries };
+            pendingImport = { fileName: file.name, sheetName, entries, ...parseReferenceSheets(workbook) };
             openImportReview();
             setStatus(`${entries.length.toLocaleString('id-ID')} baris terbaca dari ${file.name}. Tinjau sebelum disimpan.`);
         } catch(error) {
@@ -2240,24 +3017,25 @@ window.BudgetCreatorModule = (function() {
 
     function getImportSelection() {
         if (!pendingImport) return [];
-        const skipDuplicates = document.getElementById('creatorImportSkipDuplicates')?.checked !== false;
-        return pendingImport.entries.filter(entry => !entry.errors.length && !(skipDuplicates && entry.duplicateOfExisting));
+        return pendingImport.entries.filter(entry => !entry.errors.length);
     }
 
     function openImportReview() {
         const modal = document.getElementById('creatorImportModal');
         if (!modal) return;
-        const skip = document.getElementById('creatorImportSkipDuplicates');
-        if (skip) skip.checked = true;
         const filter = document.getElementById('creatorImportIssueFilter');
         if (filter) filter.value = 'issues';
+        initImportModes();
         renderImportReview();
         modal.classList.remove('hidden');
         modal.classList.add('flex');
         requestAnimationFrame(() => modal.classList.remove('opacity-0'));
+        refreshImportPlan();
     }
 
     function closeImportReview() {
+        if (importBusy) return;
+        importPlanCache = null;
         const modal = document.getElementById('creatorImportModal');
         if (modal) {
             modal.classList.add('opacity-0');
@@ -2328,28 +3106,7 @@ window.BudgetCreatorModule = (function() {
         }).join('') + (visible.length > limit ? `<tr><td colspan="9" class="py-3 text-center text-xs text-slate-500">+${fmt(visible.length - limit)} baris lain tidak ditampilkan.</td></tr>` : '')
             : `<tr><td colspan="9" class="py-10 text-center text-xs text-slate-500">${filter === 'all' ? 'Tidak ada baris.' : 'Tidak ada masalah - semua baris valid.'}</td></tr>`;
 
-        const confirmButton = document.getElementById('creatorImportConfirmButton');
-        confirmButton.disabled = !selection.length;
-        confirmButton.textContent = selection.length ? `Simpan ${fmt(selection.length)} baris` : 'Tidak ada baris valid';
-    }
-
-    async function confirmImport() {
-        if (!pendingImport || bulkOperationInProgress) return;
-        const rows = getImportSelection().map(entry => entry.data);
-        const skipped = pendingImport.entries.length - rows.length;
-        if (!rows.length) return;
-        closeImportReview();
-        const result = await commitRows(rows, { title: 'Mengimpor Excel Budget Creator', label: 'Budget Creator Import' });
-        const message = `Import: ${describeCommitResult(result)}${skipped ? ` · ${skipped.toLocaleString('id-ID')} dilewati (error/duplikat)` : ''}.`;
-        setStatus(message, Boolean(result.failed.length));
-        if (result.failed.length) {
-            await window.SmartBaraLayout.confirmDialog({
-                title: 'Import belum selesai',
-                message: `${message} Baris yang sudah tersimpan tetap aman. Upload ulang file yang sama: baris yang sudah masuk terdeteksi sebagai duplikat dan dilewati otomatis.`,
-                confirmText: 'Mengerti',
-                cancelText: 'Tutup'
-            });
-        }
+        updateImportConfirmButton(selection.length);
     }
 
     function setStatus(msg, isError = false) {
@@ -2384,6 +3141,9 @@ window.BudgetCreatorModule = (function() {
         importExcel,
         closeImportReview,
         confirmImport,
+        refreshImportPlan,
+        openBackupDialog,
+        closeBackupDialog,
         scheduleRender
     };
 })();

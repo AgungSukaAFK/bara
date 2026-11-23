@@ -44,6 +44,9 @@
                     <button type="button" onclick="BudgetCreatorModule.exportExcel()" class="btn btn-secondary">
                         📊 Export Excel
                     </button>
+                    <button type="button" onclick="BudgetCreatorModule.openBackupDialog()" class="btn btn-secondary">
+                        🕘 Pulihkan Backup
+                    </button>
                     <button type="button" onclick="document.getElementById('creatorImportFileInput').click()" class="btn btn-primary">
                         📥 Import Excel
                     </button>
@@ -271,11 +274,30 @@
             </header>
             <div class="space-y-3 border-b border-white/10 p-4">
                 <div id="creatorImportSummary" class="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6"></div>
+                <div id="creatorImportModes" class="grid gap-3 lg:grid-cols-[minmax(260px,.9fr)_minmax(0,1.5fr)]">
+                    <div class="space-y-2">
+                        <p class="m-0 text-[10px] font-bold uppercase tracking-wider text-slate-400">Mode import</p>
+                        <label class="flex cursor-pointer items-start gap-3 rounded-lg border border-white/10 p-2.5 hover:bg-white/5">
+                            <input type="radio" name="creatorImportMode" value="new" class="mt-1" onchange="BudgetCreatorModule.refreshImportPlan()">
+                            <span class="text-xs text-slate-200"><strong>Periode baru</strong> <span class="text-[10px] font-bold uppercase text-emerald-300">default</span><br><span class="text-slate-400">Buat periode baru lalu isi semua data dari file. Data periode lain tidak disentuh. Hanya superadmin.</span></span>
+                        </label>
+                        <label class="flex cursor-pointer items-start gap-3 rounded-lg border border-white/10 p-2.5 hover:bg-white/5">
+                            <input type="radio" name="creatorImportMode" value="upsert" class="mt-1" onchange="BudgetCreatorModule.refreshImportPlan()">
+                            <span class="text-xs text-slate-200"><strong>Upsert ke periode aktif</strong><br><span class="text-slate-400">Cocokkan lewat ID Budget (planning) dan departemen + nama (budget akun/proyek): perbarui yang sama, tambah yang baru, sisanya dibiarkan.</span></span>
+                        </label>
+                        <label class="flex cursor-pointer items-start gap-3 rounded-lg border border-white/10 p-2.5 hover:bg-white/5">
+                            <input type="radio" name="creatorImportMode" value="replace" class="mt-1" onchange="BudgetCreatorModule.refreshImportPlan()">
+                            <span class="text-xs text-slate-200"><strong>Ganti seluruh periode aktif</strong><br><span class="text-slate-400">Seluruh data periode sama persis dengan file; baris yang tidak ada di file dihapus dari ketiga tabel. Hanya superadmin/spv.</span></span>
+                        </label>
+                        <div id="creatorImportNewPeriodWrap">
+                            <label for="creatorImportPeriodName" class="mb-1 block text-[10px] font-bold uppercase tracking-wider text-slate-400">Nama periode baru</label>
+                            <input type="text" id="creatorImportPeriodName" maxlength="40" class="form-input w-full text-sm" placeholder="Contoh: GMI-BUDGET 2027" oninput="BudgetCreatorModule.refreshImportPlan()">
+                        </div>
+                        <p id="creatorImportTargetWrap" class="m-0 hidden text-xs text-slate-400">Periode tujuan: <strong id="creatorImportTargetPeriod" class="text-white"></strong></p>
+                    </div>
+                    <div id="creatorImportPlan" class="rounded-xl border border-white/10 bg-white/5 p-3"></div>
+                </div>
                 <div class="flex flex-wrap items-center gap-4 text-xs text-slate-300">
-                    <label class="flex cursor-pointer items-center gap-2">
-                        <input id="creatorImportSkipDuplicates" type="checkbox" class="h-4 w-4 accent-teal-400" checked>
-                        Lewati baris yang sama persis dengan data di database (mencegah data dobel saat upload ulang)
-                    </label>
                     <label class="ml-auto flex items-center gap-2">Tampilkan
                         <select id="creatorImportIssueFilter" class="form-select w-44 text-xs">
                             <option value="issues">Baris bermasalah</option>
@@ -294,9 +316,31 @@
                     <tbody id="creatorImportReviewBody" class="divide-y divide-white/5"></tbody>
                 </table>
             </div>
-            <footer class="flex justify-end gap-2 border-t border-white/10 bg-slate-950/30 p-4">
+            <footer class="flex flex-wrap items-center justify-end gap-2 border-t border-white/10 bg-slate-950/30 p-4">
+                <span id="creatorImportStatus" class="min-w-0 flex-1 break-words text-xs text-slate-400" role="status"></span>
                 <button type="button" onclick="BudgetCreatorModule.closeImportReview()" class="btn btn-secondary text-xs">Batal</button>
                 <button id="creatorImportConfirmButton" type="button" onclick="BudgetCreatorModule.confirmImport()" class="btn btn-primary text-xs">Simpan</button>
+            </footer>
+        </section>
+    </div>
+
+    <!-- Modal Pulihkan Backup -->
+    <div id="creatorBackupModal" class="modal-overlay fixed inset-0 z-[9300] hidden items-center justify-center p-4 opacity-0 transition-all duration-200" onclick="if(event.target===this) BudgetCreatorModule.closeBackupDialog()">
+        <section class="glass-panel flex max-h-full w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-white/10 shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="creatorBackupTitle">
+            <header class="flex items-center justify-between gap-4 border-b border-white/10 bg-slate-950/60 px-5 py-4">
+                <div class="min-w-0">
+                    <span class="text-[10px] font-black uppercase text-teal-300">Budget Creator</span>
+                    <h3 id="creatorBackupTitle" class="m-0 mt-1 text-lg font-black text-white">Pulihkan Backup</h3>
+                </div>
+                <button type="button" onclick="BudgetCreatorModule.closeBackupDialog()" class="text-xl text-slate-400 hover:text-white" aria-label="Tutup dialog">&times;</button>
+            </header>
+            <div class="min-h-0 flex-1 space-y-3 overflow-y-auto p-5">
+                <p class="m-0 text-xs text-slate-400">Periode aktif: <strong id="creatorBackupPeriod" class="text-white"></strong>. Sistem menyimpan 5 backup terbaru per periode. Memulihkan mengganti seluruh isi periode (kondisi saat ini dibackup lebih dulu).</p>
+                <div id="creatorBackupList" class="space-y-2"></div>
+            </div>
+            <footer class="flex items-center justify-between gap-3 border-t border-white/10 bg-slate-950/60 px-5 py-3">
+                <span id="creatorBackupStatus" class="min-w-0 flex-1 break-words text-xs text-slate-400" role="status"></span>
+                <button type="button" onclick="BudgetCreatorModule.closeBackupDialog()" class="btn btn-secondary">Tutup</button>
             </footer>
         </section>
     </div>

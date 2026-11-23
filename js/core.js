@@ -1767,7 +1767,7 @@ window.SmartBaraCore = (function() {
                 counts[tableName] = copies.length;
             }
 
-            const settings = settingsResults.flatMap(result => result.data || []).map(row => {
+            const settings = settingsResults.flatMap(result => result.data || []).filter(row => !String(row.key || '').startsWith('budget_creator_planning_backup__')).map(row => {
                 const copy = { ...row, key: row.key.replace(source, target), value: rewritePeriodInValue(row.value, source, target) };
                 delete copy.id;
                 return copy;
