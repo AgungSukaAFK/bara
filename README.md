@@ -54,53 +54,54 @@ Aplikasi ini telah ditransformasikan dari arsitektur *monolithic single-page* (1
     - Visualisasi grafik tren komparasi Finance vs Rekonsil menggunakan Chart.js.
 
 12. **Pengguna & Akses (`users.html`)**
-    - Manajemen peran pengguna (Admin vs Baca Saja).
-    - Pemantauan status online dan riwayat login sesi perangkat.
+    - Memberi/mencabut akses Smart BARA untuk akun Lourdes yang sudah ada, mengatur level (Superadmin, SPV, Tim, Viewer) dan departemen default.
+    - Membuat, menonaktifkan, dan reset password akun dilakukan platform admin di `https://monitoring.lourdes.cloud/pengguna`.
 
 13. **Pengaturan AI Budget (`ai-settings.html`)**
    - Mendukung 20 provider: Gemini, OpenRouter, Groq, Cloudflare Workers AI, Cohere, Cerebras, Claude, SambaNova, Mistral, Together AI, Fireworks, NVIDIA NIM, Hugging Face, SiliconFlow, Novita, Hyperbolic, Z.AI, Alibaba DashScope, Moonshot AI, dan MiniMax.
-   - Banyak API key disimpan di tabel `smartbara_ai_keys`; Edge Function mencoba key aktif sesuai urutan prioritas dan beralih ke key berikutnya jika provider gagal atau terkena limit.
-   - Model dapat dipilih dari katalog terbaru provider. Jika model Gemini tersimpan tidak lagi tersedia, Edge Function memilih model chat pengganti, menyimpannya, lalu mencoba ulang.
-   - Browser hanya menerima metadata key dan empat karakter terakhir. Akses tabel dibatasi untuk `service_role`.
+   - Banyak API key disimpan di tabel `smartbara_ai_keys`; Server (`/api/budget-ai`) mencoba key aktif sesuai urutan prioritas dan beralih ke key berikutnya jika provider gagal atau terkena limit.
+   - Model dapat dipilih dari katalog terbaru provider. Jika model Gemini tersimpan tidak lagi tersedia, server memilih model chat pengganti, menyimpannya, lalu mencoba ulang.
+   - Browser hanya menerima metadata key dan empat karakter terakhir. Tabel hanya bisa diakses server (secret key).
    - Per 31 Oktober 2026, opsi dengan kuota gratis/evaluasi yang terdokumentasi mencakup Gemini, model `:free` OpenRouter, Groq, Cloudflare Workers AI, dan Cohere. Cerebras menyediakan kredit trial terbatas; batas dan syarat dapat berubah.
 
-### Deploy Edge Functions
+## 🗄️ Database: Supabase Lourdes
 
-Deploy Edge Function dari root project dengan Supabase CLI:
+Sejak 26 Nov 2026 Smart BARA memakai **Supabase Lourdes** (self-hosted, `https://db.lourdes.cloud`), schema `smartbara`.
+Sebelumnya di Supabase Cloud GOA (schema `public`); data sudah dipindah dan GOA tidak dipakai lagi oleh app ini.
 
-```powershell
-supabase functions deploy budget-ai --project-ref cjspxjtbgrumfklhewkf
-supabase functions deploy admin-users --project-ref cjspxjtbgrumfklhewkf
-```
+- Skema dikelola **hanya** di repo `~/project/lourdes-db` (migration `20261126120500_app_smartbara.sql`).
+  Repo ini tidak boleh punya `supabase/migrations` atau menjalankan `supabase db push`.
+  Panduan: `~/project/lourdes-db/docs/claude-app-guide.md` dan `docs/standar-app.md`.
+- Login memakai akun Lourdes (satu akun untuk semua app). Hak akses dari `public.app_access` (app `smartbara`):
 
-Setelah deploy, menu **Pengaturan AI Budget** memakai fungsi `budget-ai`, sedangkan menu **Pengguna & Akses** memakai fungsi `admin-users`. API key tersimpan pada `smartbara_ai_keys` dan hanya dapat dibaca Edge Function.
+  | Level Smart BARA | app_access | smartbara.members |
+  | --- | --- | --- |
+  | Superadmin | `admin` (atau platform admin) | - |
+  | SPV | `editor` | `is_spv = true` |
+  | Tim | `editor` | `is_spv = false` |
+  | Viewer | `viewer` | - |
 
----
-
-## 🗄️ Database Supabase & Skrip SQL
-
-Aplikasi menggunakan Supabase project GOA (`https://cjspxjtbgrumfklhewkf.supabase.co`).
-Skrip DDL lengkap untuk tabel-tabel baru, RPC dimension list, dan publikasi Realtime tersedia di:
-`database_schema.sql`
-
-Jalankan skrip tersebut di **Supabase Dashboard ➔ SQL Editor** untuk membuat tabel key AI `smartbara_ai_keys` sebelum mengelola key dari aplikasi.
-
-Jalankan skrip tersebut di **Supabase Dashboard ➔ SQL Editor** untuk mengaktifkan:
-- Tabel `smartbara_budget_creator_planning`
-- Tabel `smartbara_future_budget`
-- Tabel `smartbara_asset`
-- Tabel `smartbara_history`
-- RPC `list_smartbara_planning_dimensions`
-- Supabase Realtime publication untuk sinkronisasi otomatis antar pengguna.
+  Level dibaca lewat RPC `smartbara.access_level()`; RLS di setiap tabel memakai aturan yang sama.
+- Fitur AI berjalan di server app (`server/budget-ai.mts`, `POST /api/budget-ai`), bukan Edge Function.
 
 ---
 
 ## 🚀 Cara Menjalankan Aplikasi
 
-Aplikasi ini dibangun murni menggunakan standard web modern (Vanilla JS, CSS Tokens, Tailwind CDN, Supabase JS v2, ExcelJS, Chart.js) sehingga **dapat dibuka langsung** melalui:
-- **VS Code Live Server**: Klik kanan pada `Smart BARA 7.10 HZ/index.html` ➔ pilih `Open with Live Server`.
-- **Browser Langsung**: Dobel klik `index.html` pada File Explorer.
-- **Hosting / Deploy**: Langsung siap diunggah ke Vercel, Netlify, atau web hosting static manapun tanpa perlu build step `npm run build`.
+Frontend tetap vanilla JS tanpa build step, dilayani `server.mjs` (Node >= 24) yang juga menyediakan `/api/budget-ai`.
+
+```sh
+npm install
+# .env.lourdes (tidak di-commit): SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, SUPABASE_SECRET_KEY
+# Isi tanpa menampilkan nilainya:
+#   { echo SUPABASE_URL=https://db.lourdes.cloud; ssh root@145.79.8.166 "grep -E '^(SUPABASE_PUBLISHABLE_KEY|SUPABASE_SECRET_KEY)=' /root/apps/supabase/lourdes/.env"; } > .env.lourdes
+npm start            # http://127.0.0.1:3000
+```
+
+**Deploy:** Coolify (build pack Dockerfile) di VPS Lourdes, domain `https://smartbara.lourdes.cloud`.
+Env runtime (jangan centang *Available at Buildtime*): `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SECRET_KEY`.
+Healthcheck: `GET /api/health` (host `127.0.0.1`).
+
 ## Tema Tampilan
 
 Pengguna memilih tema lewat tombol **Pengaturan tampilan** di header. Pilihan disimpan per browser.

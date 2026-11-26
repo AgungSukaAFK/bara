@@ -169,8 +169,8 @@ window.AISettingsModule = (function() {
 
     async function invokeAction(payload) {
         const client = window.SmartBaraCore.getClient();
-        if (!client?.functions?.invoke) throw new Error('Koneksi Supabase belum tersedia.');
-        const { data, error } = await client.functions.invoke(window.SMART_BARA_CONFIG.BUDGET_AI_FUNCTION, { body: payload });
+        if (!client) throw new Error('Koneksi Supabase belum tersedia.');
+        const { data, error } = await window.SmartBaraCore.invokeBudgetAiRequest({ body: payload });
         if (error) throw new Error(await getErrorMessage(error));
         if (data?.error) throw new Error(data.error);
         if (data?.success === false) throw new Error(data.message || 'Permintaan ditolak oleh server.');

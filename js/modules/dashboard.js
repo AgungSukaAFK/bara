@@ -1211,8 +1211,8 @@ window.DashboardModule = (function() {
 
     async function requestPresentationSlideAnalyses(slideNotes) {
         const client = window.SmartBaraCore.getClient();
-        if (!client?.functions?.invoke || !window.SMART_BARA_CONFIG.BUDGET_AI_FUNCTION) throw new Error('Koneksi AI belum tersedia.');
-        const { data, error } = await client.functions.invoke(window.SMART_BARA_CONFIG.BUDGET_AI_FUNCTION, {
+        if (!client) throw new Error('Koneksi AI belum tersedia.');
+        const { data, error } = await window.SmartBaraCore.invokeBudgetAiRequest({
             body: { action: 'analyze-presentation', slides: slideNotes.map(({ id, title, data }) => ({ id, title, data })) }
         });
         if (error) {
@@ -3339,7 +3339,7 @@ window.DashboardModule = (function() {
         button.disabled = true;
         status.textContent = 'Menyusun alasan per akun dengan AI...';
         try {
-            const { data: result, error } = await client.functions.invoke(window.SMART_BARA_CONFIG.BUDGET_AI_FUNCTION, {
+            const { data: result, error } = await window.SmartBaraCore.invokeBudgetAiRequest({
                 body: {
                     action: 'analyze-account-growth',
                     analysis: {
@@ -3406,7 +3406,7 @@ window.DashboardModule = (function() {
         status.textContent = 'Meminta analisa menggunakan API key aktif...';
         output.textContent = '';
         try {
-            const { data, error } = await client.functions.invoke(window.SMART_BARA_CONFIG.BUDGET_AI_FUNCTION, {
+            const { data, error } = await window.SmartBaraCore.invokeBudgetAiRequest({
                 body: { action: 'analyze', analysis: payload }
             });
             if (error) throw new Error(await window.AISettingsModule.getErrorMessage(error));

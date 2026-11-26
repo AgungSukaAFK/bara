@@ -1,0 +1,16 @@
+{
+  "name": "smart-bara",
+  "version": "7.10.0",
+  "private": true,
+  "description": "Smart BARA: konsolidasi rekonsiliasi & budget (Supabase Lourdes, schema smartbara)",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env.lourdes server.mjs",
+    "check": "node --check server.mjs && node --check api/smart-asset.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.119.2"
+  }
+}

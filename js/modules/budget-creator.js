@@ -732,7 +732,7 @@ window.BudgetCreatorModule = (function() {
                 current_annual_budget: Number(document.getElementById('creatorAiManualAnnualBudget')?.value) || 0,
                 target_year: Number(document.getElementById('creatorAiManualYear')?.value) || getMonthlyTargetYear('tahun depan')
             };
-            const { data, error } = await client.functions.invoke(window.SMART_BARA_CONFIG.BUDGET_AI_FUNCTION, {
+            const { data, error } = await window.SmartBaraCore.invokeBudgetAiRequest({
                 body: { action: 'recommend-budget', context }
             });
             if (error) throw new Error(await window.AISettingsModule.getErrorMessage(error));
@@ -993,9 +993,9 @@ window.BudgetCreatorModule = (function() {
     async function createAiDraft(description) {
         const functionName = window.SMART_BARA_CONFIG.BUDGET_AI_FUNCTION;
         const client = window.SmartBaraCore.getClient();
-        if (!functionName || !client?.functions?.invoke) throw new Error('Server AI belum tersedia. Deploy Supabase Edge Function budget-ai terlebih dahulu.');
+        if (!client) throw new Error('Server AI belum tersedia.');
 
-        const { data, error } = await client.functions.invoke(functionName, {
+        const { data, error } = await window.SmartBaraCore.invokeBudgetAiRequest({
             body: {
                 prompt: description,
                 period: window.SmartBaraCore.getActivePeriod(),

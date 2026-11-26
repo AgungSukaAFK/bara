@@ -1,0 +1,17 @@
+.git
+.vercel
+.andromity
+.claude
+.env*
+node_modules
+data
+docs
+restore-*
+supabase
+*.xls
+*.xlsx
+*Backup*.json
+smart-asset-project/*.json
+smart-asset-project/data.js
+smart-asset-project/.andromity
+smart-asset-project/.vscode

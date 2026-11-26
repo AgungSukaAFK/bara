@@ -280,7 +280,7 @@ function setupAssetStateRealtime(client) {
   assetCloudRealtimeChannel = client.channel('smart-asset-state-sync')
     .on('postgres_changes', {
       event: '*',
-      schema: 'public',
+      schema: window.SMART_BARA_CONFIG?.DB_SCHEMA || 'smartbara',
       table: 'smart_asset_monitor_config',
       filter: `key=eq.${ASSET_CLOUD_STATE_KEY}`
     }, payload => {

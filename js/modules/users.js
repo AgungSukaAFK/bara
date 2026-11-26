@@ -1,17 +1,26 @@
 // ==============================================================================
 // SMART BARA 7.10 HZ - USERS & ACCESS ADMINISTRATION MODULE
-// User Management, Role-Based Access Control & Active Sessions Tracking
+// Akun dikelola platform Lourdes (monitoring.lourdes.cloud/pengguna): app ini TIDAK membuat,
+// menghapus, atau mereset password akun. Di sini admin Smart BARA hanya mengatur:
+//   - akses app (public.app_access, app_id 'smartbara'): admin / editor / viewer
+//   - data khusus Smart BARA (smartbara.members): penanda SPV dan departemen default
+// Pemetaan level: superadmin = admin, spv = editor + is_spv, tim = editor, viewer = viewer.
 // ==============================================================================
 
 window.UsersModule = (function() {
+    const APP_ID = window.SMART_BARA_CONFIG.APP_ID || 'smartbara';
+    const LEVELS = ['superadmin', 'spv', 'tim', 'viewer'];
     let userRecords = [];
     let isSaving = false;
+
+    const escapeHtml = value => SmartBaraFormatters.escapeHtml(value);
 
     async function init() {
         ensureToastHost();
         localStorage.removeItem('smartbara_password_reset_cache');
+        const link = document.getElementById('platformUsersLink');
+        if (link) link.href = window.SMART_BARA_CONFIG.PLATFORM_USERS_URL;
         await loadData();
-        bindEvents();
     }
 
     function ensureToastHost() {
@@ -25,54 +34,17 @@ window.UsersModule = (function() {
         return host;
     }
 
-    function generateTemporaryPassword() {
-        if (!window.crypto?.getRandomValues) {
-            throw new Error('Browser tidak mendukung generator password yang aman.');
-        }
-
-        const characterSets = [
-            'ABCDEFGHJKLMNPQRSTUVWXYZ',
-            'abcdefghijkmnopqrstuvwxyz',
-            '23456789',
-            '!@#$%&*?'
-        ];
-        const allCharacters = characterSets.join('');
-        const randomIndex = (max) => {
-            const range = 0x100000000;
-            const limit = Math.floor(range / max) * max;
-            const value = new Uint32Array(1);
-            do {
-                window.crypto.getRandomValues(value);
-            } while (value[0] >= limit);
-            return value[0] % max;
-        };
-        const characters = characterSets.map(set => set[randomIndex(set.length)]);
-        while (characters.length < 18) {
-            characters.push(allCharacters[randomIndex(allCharacters.length)]);
-        }
-        for (let i = characters.length - 1; i > 0; i--) {
-            const j = randomIndex(i + 1);
-            [characters[i], characters[j]] = [characters[j], characters[i]];
-        }
-        return characters.join('');
-    }
-
     function showToast({ title = 'Informasi', message = '', type = 'success', duration = 2800 } = {}) {
         const host = ensureToastHost();
         const toast = document.createElement('div');
-        const iconMap = {
-            success: '✓',
-            info: 'i',
-            warning: '!',
-            error: '×'
-        };
+        const iconMap = { success: '✓', info: 'i', warning: '!', error: '×' };
 
         toast.className = `smartbara-toast smartbara-toast-${type}`;
         toast.innerHTML = `
             <div class="smartbara-toast-icon">${iconMap[type] || 'i'}</div>
             <div class="smartbara-toast-content">
-                <div class="smartbara-toast-title">${SmartBaraFormatters.escapeHtml(title)}</div>
-                <div class="smartbara-toast-message">${SmartBaraFormatters.escapeHtml(message)}</div>
+                <div class="smartbara-toast-title">${escapeHtml(title)}</div>
+                <div class="smartbara-toast-message">${escapeHtml(message)}</div>
             </div>
             <button type="button" class="smartbara-toast-close" aria-label="Tutup">×</button>
         `;
@@ -88,45 +60,22 @@ window.UsersModule = (function() {
         setTimeout(close, duration);
     }
 
-    function normalizeUserRecord(rawUser) {
-        if (!rawUser || !rawUser.email) return null;
-
-        const fullName = rawUser.fullName || rawUser.full_name || rawUser.name || rawUser.user_metadata?.full_name || '';
-        const department = rawUser.department || rawUser.dept || rawUser.user_metadata?.department || rawUser.user_metadata?.dept || '';
-        const roleName = String(rawUser.app_metadata?.role || rawUser.role || rawUser.user_role || 'viewer').toLowerCase();
-        const role = String(rawUser.email).toLowerCase() === 'spv.ga@garudamart.com'
-            ? 'superadmin'
-            : roleName === 'admin' ? 'superadmin' : roleName === 'editor' ? 'tim' : roleName === 'reader' ? 'viewer' : roleName;
-
-        return {
-            id: rawUser.id || rawUser.user_id || rawUser.email,
-            email: rawUser.email,
-            fullName: fullName || rawUser.email.split('@')[0],
-            department,
-            position: rawUser.position || rawUser.job_title || '',
-            role: ['superadmin', 'spv', 'tim', 'viewer'].includes(role) ? role : 'viewer',
-            emailConfirmed: rawUser.emailConfirmed ?? rawUser.email_confirmed ?? true,
-            lastSignInAt: rawUser.lastSignInAt || rawUser.last_sign_in_at || rawUser.lastSeenAt || new Date().toISOString(),
-            activeSessions: Array.isArray(rawUser.activeSessions) ? rawUser.activeSessions : (Array.isArray(rawUser.sessions) ? rawUser.sessions : [])
-        };
+    function client() {
+        const supabase = SmartBaraCore.supabase;
+        if (!supabase) throw new Error('Koneksi Supabase belum tersedia.');
+        return supabase;
     }
 
-    async function invokeAdminUsersAction(payload) {
-        const { data, error } = await SmartBaraCore.supabase.functions.invoke('admin-users', {
-            body: payload
-        });
-        if (error) {
-            let message = error.message;
-            try {
-                const response = error.context;
-                const details = response instanceof Response ? await response.clone().json() : null;
-                message = details?.error || details?.message || message;
-            } catch(e) {}
-            throw new Error(message);
-        }
-        if (data?.error) throw new Error(data.error);
-        if (data?.success === false) throw new Error(data.message || 'Permintaan ditolak oleh server.');
-        return data;
+    function toLevel(appRole, isSpv) {
+        if (appRole === 'admin') return 'superadmin';
+        if (appRole === 'editor') return isSpv ? 'spv' : 'tim';
+        return 'viewer';
+    }
+
+    function toAppRole(level) {
+        if (level === 'superadmin') return 'admin';
+        if (level === 'spv' || level === 'tim') return 'editor';
+        return 'viewer';
     }
 
     async function loadData() {
@@ -137,25 +86,55 @@ window.UsersModule = (function() {
             if (statusEl) statusEl.textContent = 'Akses Superadmin diperlukan';
             return false;
         }
-        if (tbody) tbody.innerHTML = '<tr><td colspan="5" class="p-8 text-center text-slate-500">Memuat data pengguna & sesi...</td></tr>';
+        if (tbody) tbody.innerHTML = '<tr><td colspan="5" class="p-8 text-center text-slate-500">Memuat data pengguna...</td></tr>';
         if (statusEl) statusEl.textContent = 'Memuat...';
 
         try {
-            const data = await invokeAdminUsersAction({ action: 'list' });
-            if (!data || !Array.isArray(data.users)) {
-                throw new Error('Respons server tidak berisi daftar pengguna yang valid.');
+            const supabase = client();
+            const { data: access, error: accessError } = await supabase.schema('public')
+                .from('app_access').select('user_id, role, granted_at').eq('app_id', APP_ID);
+            if (accessError) throw accessError;
+
+            const ids = (access || []).map(row => row.user_id);
+            let profiles = [];
+            let members = [];
+            if (ids.length) {
+                const [profileResult, memberResult] = await Promise.all([
+                    supabase.schema('public').from('profiles')
+                        .select('id, full_name, email, is_active, department:departments(name), job_title:job_titles(name)')
+                        .in('id', ids),
+                    supabase.from('members').select('user_id, is_spv, department').in('user_id', ids)
+                ]);
+                if (profileResult.error) throw profileResult.error;
+                if (memberResult.error) throw memberResult.error;
+                profiles = profileResult.data || [];
+                members = memberResult.data || [];
             }
-            userRecords = data.users.map(normalizeUserRecord).filter(Boolean);
+
+            const profileById = new Map(profiles.map(p => [p.id, p]));
+            const memberById = new Map(members.map(m => [m.user_id, m]));
+            userRecords = (access || []).map(row => {
+                const profile = profileById.get(row.user_id) || {};
+                const member = memberById.get(row.user_id) || {};
+                return {
+                    id: row.user_id,
+                    email: profile.email || '',
+                    fullName: profile.full_name || '',
+                    isActive: profile.is_active !== false,
+                    department: member.department || '',
+                    platformDepartment: profile.department?.name || '',
+                    position: profile.job_title?.name || '',
+                    role: toLevel(row.role, member.is_spv === true),
+                    grantedAt: row.granted_at
+                };
+            }).sort((a, b) => (a.fullName || a.email).localeCompare(b.fullName || b.email, 'id'));
 
             renderTable();
-            if (statusEl) {
-                const onlineCount = userRecords.filter(u => u.activeSessions && u.activeSessions.length > 0).length;
-                statusEl.textContent = `${userRecords.length} pengguna terdaftar · ${onlineCount} online`;
-            }
+            if (statusEl) statusEl.textContent = `${userRecords.length} pengguna punya akses Smart BARA`;
         } catch(err) {
             console.error('Error loading users:', err);
             userRecords = [];
-            if (tbody) tbody.innerHTML = `<tr><td colspan="5" class="p-8 text-center text-rose-400">Gagal memuat pengguna: ${SmartBaraFormatters.escapeHtml(err.message)}</td></tr>`;
+            if (tbody) tbody.innerHTML = `<tr><td colspan="5" class="p-8 text-center text-rose-400">Gagal memuat pengguna: ${escapeHtml(err.message)}</td></tr>`;
             if (statusEl) statusEl.textContent = 'Gagal memuat';
             return false;
         }
@@ -171,14 +150,9 @@ window.UsersModule = (function() {
 
         const filtered = userRecords.filter(u => {
             const matchesQuery = !query ||
-                (u.email && u.email.toLowerCase().includes(query)) ||
-                (u.fullName && u.fullName.toLowerCase().includes(query)) ||
-                (u.department && u.department.toLowerCase().includes(query)) ||
-                (u.position && u.position.toLowerCase().includes(query));
-
-            const matchesRole = !roleFilter || u.role === roleFilter;
-
-            return matchesQuery && matchesRole;
+                [u.email, u.fullName, u.department, u.platformDepartment, u.position]
+                    .some(value => value && value.toLowerCase().includes(query));
+            return matchesQuery && (!roleFilter || u.role === roleFilter);
         });
 
         if (filtered.length === 0) {
@@ -187,42 +161,35 @@ window.UsersModule = (function() {
         }
 
         tbody.innerHTML = filtered.map(user => {
-            const sessions = Array.isArray(user.activeSessions) ? user.activeSessions : [];
-            const isOnline = sessions.length > 0;
             const roleBadge = {
                 superadmin: '<span class="badge badge-teal">Superadmin</span>',
                 spv: '<span class="badge badge-amber">SPV</span>',
                 tim: '<span class="badge text-sky-300 border-sky-500/30 bg-sky-500/10">Tim</span>',
                 viewer: '<span class="badge text-slate-400 border-white/10 bg-white/5">Viewer</span>'
-            }[user.role] || '<span class="badge text-slate-400 border-white/10 bg-white/5">Viewer</span>';
-
-            const presenceMarkup = isOnline
-                ? `<div class="flex items-center gap-1.5 text-emerald-400 font-bold text-xs"><span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>Online (${sessions.length} sesi)</div><div class="text-[10px] text-slate-400 mt-0.5">${sessions.map(s => s.device_label || 'Browser').join(', ')}</div>`
-                : `<div class="flex items-center gap-1.5 text-slate-500 text-xs"><span class="w-2 h-2 rounded-full bg-slate-600"></span>Offline</div><div class="text-[10px] text-slate-400 mt-0.5">Login: ${user.lastSignInAt ? new Date(user.lastSignInAt).toLocaleString('id-ID') : 'Belum pernah'}</div>`;
+            }[user.role];
+            const statusMarkup = user.isActive
+                ? '<div class="flex items-center gap-1.5 text-emerald-400 text-xs"><span class="w-2 h-2 rounded-full bg-emerald-400"></span>Akun aktif</div>'
+                : '<div class="flex items-center gap-1.5 text-rose-400 text-xs"><span class="w-2 h-2 rounded-full bg-rose-400"></span>Akun dinonaktifkan</div>';
+            const grantedMarkup = user.grantedAt
+                ? `<div class="text-[10px] text-slate-400 mt-0.5">Akses sejak ${escapeHtml(new Date(user.grantedAt).toLocaleDateString('id-ID'))}</div>`
+                : '';
 
             return `
                 <tr class="hover:bg-white/5 transition border-b border-white/5">
                     <td class="py-3 px-4">
-                        <div class="font-bold text-white">${SmartBaraFormatters.escapeHtml(user.fullName || 'Tanpa Nama')}</div>
-                        <div class="text-xs text-teal-400 font-mono mt-0.5">${SmartBaraFormatters.escapeHtml(user.email)}</div>
+                        <div class="font-bold text-white">${escapeHtml(user.fullName || 'Tanpa Nama')}</div>
+                        <div class="text-xs text-teal-400 font-mono mt-0.5">${escapeHtml(user.email || user.id)}</div>
                     </td>
                     <td class="py-3 px-4">
-                        <div class="text-slate-300 font-medium text-xs">${SmartBaraFormatters.escapeHtml(user.department || '-')}</div>
-                        <div class="text-slate-500 text-[11px] mt-0.5">${SmartBaraFormatters.escapeHtml(user.position || '-')}</div>
+                        <div class="text-slate-300 font-medium text-xs">${escapeHtml(user.department || user.platformDepartment || '-')}</div>
+                        <div class="text-slate-500 text-[11px] mt-0.5">${escapeHtml(user.position || '-')}</div>
                     </td>
                     <td class="py-3 px-4">${roleBadge}</td>
-                    <td class="py-3 px-4">${presenceMarkup}</td>
+                    <td class="py-3 px-4">${statusMarkup}${grantedMarkup}</td>
                     <td class="py-3 px-4 text-right">
                         <div class="flex items-center justify-end gap-2">
-                            <button type="button" onclick="UsersModule.openModal('${user.id}')" class="btn btn-secondary text-xs px-2.5 py-1">
-                                ✏️ Edit
-                            </button>
-                            <button type="button" onclick="UsersModule.sendPasswordReset('${user.id}')" class="btn bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-300 border border-indigo-500/30 text-xs px-2.5 py-1" title="Reset password dan tampilkan password baru">
-                                🔑 Reset
-                            </button>
-                            <button type="button" onclick="UsersModule.deleteUser('${user.id}')" class="btn bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 text-xs px-2 py-1" title="Hapus Pengguna">
-                                🗑️
-                            </button>
+                            <button type="button" onclick="UsersModule.openModal('${escapeHtml(user.id)}')" class="btn btn-secondary text-xs px-2.5 py-1">✏️ Edit</button>
+                            <button type="button" onclick="UsersModule.revokeAccess('${escapeHtml(user.id)}')" class="btn bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 text-xs px-2 py-1" title="Cabut akses Smart BARA">Cabut</button>
                         </div>
                     </td>
                 </tr>
@@ -232,31 +199,29 @@ window.UsersModule = (function() {
 
     function openModal(userId = '') {
         if (!SmartBaraCore.canManageSettings()) {
-            showToast({ title: 'Akses ditolak', message: 'Hanya Superadmin yang dapat mengelola akun.', type: 'warning' });
+            showToast({ title: 'Akses ditolak', message: 'Hanya Superadmin yang dapat mengatur akses.', type: 'warning' });
             return;
         }
         const modal = document.getElementById('adminUserModal');
         if (!modal) return;
 
         const user = userRecords.find(u => u.id === userId) || {
-            id: '',
-            email: '',
-            fullName: '',
-            department: '',
-            position: '',
-            role: 'viewer'
+            id: '', email: '', fullName: '', department: '', position: '', role: 'viewer'
         };
+        const isNew = !user.id;
 
         document.getElementById('adminUserId').value = user.id;
-        document.getElementById('adminUserEmail').value = user.email;
-        document.getElementById('adminUserFullName').value = user.fullName;
+        const emailInput = document.getElementById('adminUserEmail');
+        emailInput.value = user.email;
+        emailInput.readOnly = !isNew;
+        document.getElementById('adminUserFullName').value = user.fullName || (isNew ? '' : '-');
         document.getElementById('adminUserDepartment').value = user.department;
-        document.getElementById('adminUserPosition').value = user.position;
+        document.getElementById('adminUserPosition').value = user.position || '';
         document.getElementById('adminUserRole').value = user.role;
         renderDepartmentOptions(user.department);
 
-        document.getElementById('adminUserModalTitle').textContent = user.id ? 'Edit Pengguna' : 'Tambah Pengguna Baru';
-        document.getElementById('adminUserSaveButton').textContent = user.id ? 'Simpan Perubahan' : 'Buat Akun';
+        document.getElementById('adminUserModalTitle').textContent = isNew ? 'Beri Akses Smart BARA' : 'Edit Akses Pengguna';
+        document.getElementById('adminUserSaveButton').textContent = isNew ? 'Beri Akses' : 'Simpan Perubahan';
 
         modal.classList.remove('hidden');
         setTimeout(() => modal.classList.remove('opacity-0'), 10);
@@ -273,25 +238,22 @@ window.UsersModule = (function() {
         const list = document.getElementById('adminUserDepartmentOptions');
         if (!list) return;
         const departments = new Set(window.SmartBaraCore?.getDepartments?.() || []);
-        userRecords.forEach(user => {
-            if (user.department) departments.add(user.department);
-        });
+        userRecords.forEach(user => { if (user.department) departments.add(user.department); });
         if (currentDepartment) departments.add(currentDepartment);
         list.innerHTML = [...departments].sort().map(department =>
-            `<option value="${SmartBaraFormatters.escapeHtml(department)}"></option>`
+            `<option value="${escapeHtml(department)}"></option>`
         ).join('');
     }
 
-    function showCreatedUserPassword(userId, email, fullName, password) {
-        document.getElementById('resetPasswordUserId').value = userId || '';
-        document.getElementById('resetPasswordEmail').value = email;
-        document.getElementById('resetPasswordValue').value = password;
-        document.getElementById('resetPasswordStatus').textContent = `Akun ${fullName || email} dibuat. Berikan password sementara ini langsung ke pengguna.`;
-        const modal = document.getElementById('adminPasswordResetModal');
-        if (modal) {
-            modal.classList.remove('hidden');
-            setTimeout(() => modal.classList.remove('opacity-0'), 10);
+    async function findProfileByEmail(email) {
+        const { data, error } = await client().schema('public').from('profiles')
+            .select('id, email, full_name, is_active').ilike('email', email).limit(2);
+        if (error) throw error;
+        const match = (data || []).find(p => String(p.email || '').toLowerCase() === email.toLowerCase());
+        if (!match) {
+            throw new Error(`Akun ${email} belum ada di Lourdes. Minta platform admin membuatnya di konsol pengguna Lourdes, lalu beri akses di sini.`);
         }
+        return match;
     }
 
     async function saveUser(e) {
@@ -302,195 +264,95 @@ window.UsersModule = (function() {
         }
         if (isSaving) return;
 
-        const id = document.getElementById('adminUserId').value;
+        let userId = document.getElementById('adminUserId').value;
+        const isNew = !userId;
         const email = document.getElementById('adminUserEmail').value.trim();
-        const fullName = document.getElementById('adminUserFullName').value.trim();
         const department = document.getElementById('adminUserDepartment').value.trim();
-        const position = document.getElementById('adminUserPosition').value.trim();
-        const role = email.toLowerCase() === 'spv.ga@garudamart.com'
-            ? 'superadmin'
-            : document.getElementById('adminUserRole').value;
-
-        if (!email) {
+        const level = document.getElementById('adminUserRole').value;
+        if (!LEVELS.includes(level)) return;
+        if (isNew && !email) {
             showToast({ title: 'Peringatan', message: 'Email wajib diisi.', type: 'warning' });
             return;
         }
+        if (!isNew && userId === SmartBaraCore.getUser()?.id && level !== 'superadmin') {
+            showToast({ title: 'Aksi ditolak', message: 'Anda tidak dapat menurunkan level akses akun sendiri.', type: 'warning' });
+            return;
+        }
+
         const button = document.getElementById('adminUserSaveButton');
         const buttonText = button.textContent;
         isSaving = true;
         button.disabled = true;
         button.textContent = 'Menyimpan...';
         try {
-            const temporaryPassword = id ? '' : generateTemporaryPassword();
-            const created = await invokeAdminUsersAction({
-                action: id ? 'update' : 'create',
-                userId: id,
-                email,
-                fullName,
-                department,
-                position,
-                role,
-                ...(id ? {} : { password: temporaryPassword })
-            });
-            closeModal();
-            const refreshed = await loadData();
-            if (!id) showCreatedUserPassword(created.userId, email, fullName, temporaryPassword);
-            if (refreshed) {
-                showToast({
-                    title: id ? 'Profil berhasil diperbarui' : 'Akun berhasil dibuat',
-                    message: id ? 'Perubahan pengguna berhasil disimpan ke server.' : `Akun ${email} berhasil dibuat.`,
-                    type: 'success'
-                });
+            const supabase = client();
+            if (isNew) {
+                const profile = await findProfileByEmail(email);
+                if (userRecords.some(u => u.id === profile.id)) throw new Error(`${email} sudah punya akses Smart BARA.`);
+                userId = profile.id;
+                const { error } = await supabase.schema('public').from('app_access')
+                    .insert({ user_id: userId, app_id: APP_ID, role: toAppRole(level), granted_by: SmartBaraCore.getUser()?.id || null });
+                if (error) throw error;
             } else {
-                showToast({
-                    title: 'Tersimpan, daftar belum diperbarui',
-                    message: 'Server menerima perubahan, tetapi daftar pengguna gagal dimuat ulang. Tekan Muat Ulang.',
-                    type: 'warning',
-                    duration: 5000
-                });
+                const { error } = await supabase.schema('public').from('app_access')
+                    .update({ role: toAppRole(level) }).eq('user_id', userId).eq('app_id', APP_ID);
+                if (error) throw error;
             }
+            const { error: memberError } = await supabase.from('members')
+                .upsert({ user_id: userId, is_spv: level === 'spv', department: department || null }, { onConflict: 'user_id' });
+            if (memberError) throw memberError;
+
+            closeModal();
+            await loadData();
+            showToast({
+                title: isNew ? 'Akses diberikan' : 'Akses diperbarui',
+                message: isNew ? `${email} sekarang bisa masuk Smart BARA.` : 'Perubahan akses berhasil disimpan.',
+                type: 'success'
+            });
         } catch(err) {
             console.error('User save error:', err);
-            showToast({
-                title: 'Gagal menyimpan',
-                message: err.message || 'Perubahan tidak berhasil disimpan ke server.',
-                type: 'error',
-                duration: 4200
-            });
+            showToast({ title: 'Gagal menyimpan', message: err.message || 'Perubahan tidak berhasil disimpan.', type: 'error', duration: 5200 });
         } finally {
             isSaving = false;
             button.disabled = false;
-            button.textContent = id ? buttonText : 'Buat Akun';
+            button.textContent = buttonText;
         }
     }
 
-    async function deleteUser(userId) {
+    async function revokeAccess(userId) {
         if (!SmartBaraCore.canManageSettings()) {
-            showToast({ title: 'Akses ditolak', message: 'Hanya Superadmin yang dapat menghapus akun.', type: 'warning' });
+            showToast({ title: 'Akses ditolak', message: 'Hanya Superadmin yang dapat mencabut akses.', type: 'warning' });
             return;
         }
         const user = userRecords.find(u => u.id === userId);
         if (!user) return;
-
-        if (user.id === SmartBaraCore.getUser()?.id || String(user.email).toLowerCase() === 'spv.ga@garudamart.com') {
-            showToast({ title: 'Aksi ditolak', message: 'Akun aktif dan Superadmin default tidak dapat dihapus.', type: 'warning' });
+        if (user.id === SmartBaraCore.getUser()?.id) {
+            showToast({ title: 'Aksi ditolak', message: 'Akses akun yang sedang dipakai tidak dapat dicabut.', type: 'warning' });
             return;
         }
 
         const confirmed = await window.SmartBaraLayout.confirmDialog({
-            title: 'Konfirmasi hapus pengguna',
-            message: `Hapus pengguna "${user.fullName || user.email}"?`,
-            confirmText: 'Hapus',
+            title: 'Cabut akses Smart BARA',
+            message: `Cabut akses Smart BARA untuk "${user.fullName || user.email}"? Akun Lourdes-nya tetap ada dan app lain tidak terpengaruh.`,
+            confirmText: 'Cabut Akses',
             cancelText: 'Batal',
             danger: true
         });
         if (!confirmed) return;
 
         try {
-            await invokeAdminUsersAction({ action: 'delete', userId });
+            const supabase = client();
+            const { error } = await supabase.schema('public').from('app_access').delete().eq('user_id', userId).eq('app_id', APP_ID);
+            if (error) throw error;
+            await supabase.from('members').delete().eq('user_id', userId);
             userRecords = userRecords.filter(u => u.id !== userId);
             renderTable();
-            showToast({ title: 'Pengguna dihapus', message: `${user.fullName || user.email} berhasil dihapus.`, type: 'success' });
+            showToast({ title: 'Akses dicabut', message: `${user.fullName || user.email} tidak lagi bisa masuk Smart BARA.`, type: 'success' });
         } catch(err) {
-            console.error('User delete error:', err);
-            showToast({ title: 'Gagal menghapus', message: err.message || 'Pengguna tidak berhasil dihapus.', type: 'error' });
+            console.error('Revoke access error:', err);
+            showToast({ title: 'Gagal mencabut akses', message: err.message || 'Akses tidak berhasil dicabut.', type: 'error' });
         }
     }
-
-    function openPasswordResetModal(userId = '') {
-        if (!SmartBaraCore.canManageSettings()) {
-            showToast({ title: 'Akses ditolak', message: 'Hanya Superadmin yang dapat mereset password.', type: 'warning' });
-            return;
-        }
-        const user = userRecords.find(u => u.id === userId) || userRecords[0];
-        if (!user) return;
-
-        const modal = document.getElementById('adminPasswordResetModal');
-        if (!modal) return;
-
-        let password;
-        try {
-            password = generateTemporaryPassword();
-        } catch(err) {
-            showToast({ title: 'Tidak dapat membuat password', message: err.message, type: 'error' });
-            return;
-        }
-        document.getElementById('resetPasswordUserId').value = user.id;
-        document.getElementById('resetPasswordEmail').value = user.email;
-        document.getElementById('resetPasswordValue').value = password;
-        document.getElementById('resetPasswordStatus').textContent = `Reset password untuk ${user.fullName || user.email}`;
-        modal.classList.remove('hidden');
-        setTimeout(() => modal.classList.remove('opacity-0'), 10);
-    }
-
-    async function sendPasswordReset(userId) {
-        if (!SmartBaraCore.canManageSettings()) {
-            showToast({ title: 'Akses ditolak', message: 'Hanya Superadmin yang dapat mereset password.', type: 'warning' });
-            return;
-        }
-        const user = userRecords.find(u => u.id === userId);
-        if (!user) return;
-
-        try {
-            const generatedPassword = generateTemporaryPassword();
-            const payload = {
-                action: 'reset-password',
-                userId: user.id,
-                email: user.email,
-                password: generatedPassword
-            };
-
-            const result = await invokeAdminUsersAction(payload);
-            if (!result) {
-                throw new Error('Server tidak mengonfirmasi reset password.');
-            }
-
-            document.getElementById('resetPasswordUserId').value = user.id;
-            document.getElementById('resetPasswordEmail').value = user.email;
-            document.getElementById('resetPasswordValue').value = generatedPassword;
-            document.getElementById('resetPasswordStatus').textContent = `Reset password untuk ${user.fullName || user.email}`;
-            const modal = document.getElementById('adminPasswordResetModal');
-            if (modal) {
-                modal.classList.remove('hidden');
-                setTimeout(() => modal.classList.remove('opacity-0'), 10);
-            }
-
-            showToast({
-                title: 'Password baru dibuat',
-                message: `Password sementara untuk ${user.email} berhasil dibuat. Silakan lihat detail di popup reset password.`,
-                type: 'success'
-            });
-        } catch(err) {
-            console.error('Password reset error:', err);
-            showToast({ title: 'Reset gagal', message: 'Gagal membuat password sementara: ' + (err.message || err), type: 'error' });
-        }
-    }
-
-    async function copyResetPassword() {
-        const input = document.getElementById('resetPasswordValue');
-        if (!input) return;
-        try {
-            await navigator.clipboard.writeText(input.value);
-            showToast({ title: 'Tersalin', message: 'Password sementara berhasil disalin ke clipboard.', type: 'info' });
-        } catch (err) {
-            input.focus();
-            input.select();
-            if (document.execCommand('copy')) {
-                showToast({ title: 'Tersalin', message: 'Password sementara berhasil disalin.', type: 'info' });
-            } else {
-                showToast({ title: 'Siap disalin', message: 'Password sudah dipilih. Silakan salin secara manual.', type: 'warning' });
-            }
-        }
-    }
-
-    function closePasswordResetModal() {
-        const modal = document.getElementById('adminPasswordResetModal');
-        if (!modal) return;
-        modal.classList.add('opacity-0');
-        setTimeout(() => modal.classList.add('hidden'), 200);
-    }
-
-    function bindEvents() {}
 
     return {
         init,
@@ -499,11 +361,7 @@ window.UsersModule = (function() {
         openModal,
         closeModal,
         saveUser,
-        deleteUser,
-        openPasswordResetModal,
-        sendPasswordReset,
-        copyResetPassword,
-        closePasswordResetModal,
+        revokeAccess,
         showToast
     };
 })();

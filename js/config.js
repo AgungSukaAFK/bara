@@ -6,9 +6,13 @@ window.SMART_BARA_CONFIG = {
     APP_VERSION: '7.10 HZ',
     SUBTITLE: 'Enterprise Consolidation & Multi-User Planning System',
 
-    // Supabase project GOA (dipakai bersama aplikasi GOA)
-    SUPABASE_URL: 'https://cjspxjtbgrumfklhewkf.supabase.co',
-    SUPABASE_ANON_KEY: 'sb_publishable_Nx2dMQeYYas_U4yqbBxZoQ_FiOucSzJ',
+    // Supabase Lourdes (self-hosted). Data app ada di schema `smartbara`; profil & hak akses di `public`.
+    SUPABASE_URL: 'https://db.lourdes.cloud',
+    SUPABASE_ANON_KEY: 'sb_publishable_Jg0gvxyGZlSrCqwD2qxTBT_ms3M0ndN',
+    DB_SCHEMA: 'smartbara',
+    APP_ID: 'smartbara',
+    PLATFORM_USERS_URL: 'https://monitoring.lourdes.cloud/pengguna',
+    BUDGET_AI_ENDPOINT: '/api/budget-ai',
 
     DEFAULT_PERIOD: 'GMI- SEPTEMBER 2026',
     BUDGET_AI_FUNCTION: 'budget-ai',

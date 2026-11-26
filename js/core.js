@@ -53,7 +53,9 @@ window.SmartBaraCore = (function() {
     let supabaseSession = null;
     let currentUser = null;
     let isAdmin = false;
-    const DEFAULT_SUPERADMIN_EMAIL = 'spv.ga@garudamart.com';
+    // Hak akses dari Supabase Lourdes: smartbara.access_level() (app_access + smartbara.members).
+    // Disimpan per user id; null = belum dimuat / tidak punya akses app.
+    let accessProfile = { userId: null, level: null, department: '' };
 
     function resolveActivePeriodPreference() {
         const storedActivePeriod = resolveStoredPeriod(localStorage.getItem('smartbara_active_period'));
@@ -202,7 +204,8 @@ window.SmartBaraCore = (function() {
         if (typeof window.supabase !== 'undefined' && window.supabase.createClient) {
             supabaseClient = window.supabase.createClient(
                 window.SMART_BARA_CONFIG.SUPABASE_URL,
-                window.SMART_BARA_CONFIG.SUPABASE_ANON_KEY
+                window.SMART_BARA_CONFIG.SUPABASE_ANON_KEY,
+                { db: { schema: window.SMART_BARA_CONFIG.DB_SCHEMA || 'smartbara' } }
             );
             authInitPromise = initAuth();
             setupRealtimeSubscription();
@@ -270,6 +273,13 @@ window.SmartBaraCore = (function() {
             if (data?.session) {
                 supabaseSession = data.session;
                 currentUser = data.session.user;
+                const level = await refreshAccessProfile();
+                if (!level) {
+                    // Sesi ada tapi akun tidak punya akses app smartbara: keluar lokal, kembali ke login.
+                    await supabaseClient.auth.signOut({ scope: 'local' });
+                    supabaseSession = null;
+                    currentUser = null;
+                }
                 checkUserRole();
                 dispatchCoreEvent('auth_change', { user: currentUser, isAdmin });
             } else {
@@ -279,13 +289,47 @@ window.SmartBaraCore = (function() {
             }
             supabaseClient.auth.onAuthStateChange((event, session) => {
                 supabaseSession = session;
+                const previousUserId = currentUser?.id || null;
                 currentUser = session?.user || null;
                 checkUserRole();
                 dispatchCoreEvent('auth_change', { user: currentUser, isAdmin });
+                // Jangan memanggil Supabase langsung di callback ini (bisa deadlock di supabase-js);
+                // muat ulang hak akses setelahnya kalau user berganti.
+                if (currentUser && currentUser.id !== previousUserId) {
+                    setTimeout(() => {
+                        refreshAccessProfile().then(() => {
+                            checkUserRole();
+                            dispatchCoreEvent('auth_change', { user: currentUser, isAdmin });
+                        });
+                    }, 0);
+                }
             });
         } catch(e) {
             console.warn('Auth initialization error:', e);
         }
+    }
+
+    async function refreshAccessProfile() {
+        const userId = currentUser?.id || null;
+        if (!supabaseClient || !userId) {
+            accessProfile = { userId: null, level: null, department: '' };
+            return null;
+        }
+        const [{ data: level, error: levelError }, { data: member }] = await Promise.all([
+            supabaseClient.rpc('access_level'),
+            supabaseClient.from('members').select('department').eq('user_id', userId).maybeSingle()
+        ]);
+        if (levelError) {
+            console.warn('Gagal memuat hak akses Smart BARA:', levelError);
+            if (accessProfile.userId === userId) return accessProfile.level;
+            throw new Error('Gagal memeriksa akses Smart BARA. Coba lagi.');
+        }
+        accessProfile = {
+            userId,
+            level: ['superadmin', 'spv', 'tim', 'viewer'].includes(level) ? level : null,
+            department: String(member?.department || '').trim()
+        };
+        return accessProfile.level;
     }
 
     function checkUserRole() {
@@ -305,7 +349,7 @@ window.SmartBaraCore = (function() {
         const match = knownDepartments.find(dept => emailTokens.includes(dept.toLowerCase()));
         if (match) return [match];
 
-        const metadataDept = String(user?.app_metadata?.department || user?.user_metadata?.department || '').trim();
+        const metadataDept = String((user?.id && user.id === accessProfile.userId ? accessProfile.department : '') || user?.user_metadata?.department || '').trim();
         if (metadataDept) return [String(metadataDept).trim().toUpperCase()];
 
         return ['ALL'];
@@ -346,11 +390,7 @@ window.SmartBaraCore = (function() {
 
     function getAccessLevel(user = currentUser) {
         if (!user) return 'viewer';
-        if (String(user.email || '').trim().toLowerCase() === DEFAULT_SUPERADMIN_EMAIL) return 'superadmin';
-        const role = String(user.app_metadata?.role || '').trim().toLowerCase();
-        if (role === 'superadmin' || role === 'admin') return 'superadmin';
-        if (role === 'spv') return 'spv';
-        if (role === 'tim' || role === 'editor') return 'tim';
+        if (user.id && user.id === accessProfile.userId && accessProfile.level) return accessProfile.level;
         return 'viewer';
     }
 
@@ -481,13 +521,18 @@ window.SmartBaraCore = (function() {
         if (!supabaseClient) throw new Error('Supabase belum terhubung.');
         const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
         if (error) throw error;
-        const { data: isMember, error: memberError } = await supabaseClient.rpc('smartbara_is_member');
-        if (memberError || isMember !== true) {
-            await supabaseClient.auth.signOut({ scope: 'local' });
-            throw new Error(memberError ? 'Gagal memeriksa akses Smart BARA. Coba lagi.' : 'Akun ini tidak terdaftar di Smart BARA.');
-        }
         supabaseSession = data.session;
         currentUser = data.user;
+        let level = null;
+        let accessError = null;
+        try { level = await refreshAccessProfile(); } catch (error) { accessError = error; }
+        if (!level) {
+            await supabaseClient.auth.signOut({ scope: 'local' });
+            supabaseSession = null;
+            currentUser = null;
+            accessProfile = { userId: null, level: null, department: '' };
+            throw new Error(accessError ? accessError.message : 'Akun ini belum diberi akses Smart BARA. Minta admin memberi akses app Smart BARA di konsol pengguna Lourdes.');
+        }
         checkUserRole();
         const preferredPeriod = sanitizePeriodName(localStorage.getItem('smartbara_active_period') || savedPeriodRegistry.activePeriod) || getDefaultPeriod();
         if (preferredPeriod && preferredPeriod !== activePeriod) {
@@ -758,7 +803,7 @@ window.SmartBaraCore = (function() {
         realtimeState = 'connecting';
         try {
             const channel = supabaseClient.channel('smartbara_realtime_sync')
-                .on('postgres_changes', { event: '*', schema: 'public' }, payload => {
+                .on('postgres_changes', { event: '*', schema: window.SMART_BARA_CONFIG.DB_SCHEMA || 'smartbara' }, payload => {
                     notifyRealtime(payload);
                 });
             realtimeChannel = channel;
@@ -1868,6 +1913,31 @@ window.SmartBaraCore = (function() {
         }
     }
 
+    // Pengganti supabase.functions.invoke('budget-ai'): endpoint server app (server/budget-ai.mts).
+    // Bentuk hasil sama dengan functions.invoke ({ data, error }) supaya pemanggil lama tidak berubah.
+    async function invokeBudgetAi(payload) {
+        if (!supabaseClient) return { data: null, error: new Error('Supabase belum terhubung.') };
+        const { data: sessionData } = await supabaseClient.auth.getSession();
+        const token = sessionData?.session?.access_token;
+        if (!token) return { data: null, error: new Error('Sesi login tidak valid. Silakan login kembali.') };
+        try {
+            const response = await fetch(window.SMART_BARA_CONFIG.BUDGET_AI_ENDPOINT || '/api/budget-ai', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                body: JSON.stringify(payload || {})
+            });
+            const body = await response.json().catch(() => null);
+            if (!response.ok) {
+                const error = new Error(body?.error || body?.message || `Permintaan AI gagal (${response.status}).`);
+                error.status = response.status;
+                return { data: null, error };
+            }
+            return { data: body, error: null };
+        } catch (error) {
+            return { data: null, error: new Error('Tidak dapat menghubungi server AI Smart BARA.') };
+        }
+    }
+
     function dispatchCoreEvent(name, detail) {
         window.dispatchEvent(new CustomEvent(`smartbara:${name}`, { detail }));
     }
@@ -1886,6 +1956,11 @@ window.SmartBaraCore = (function() {
         logout,
         getUser: () => currentUser,
         getAccessLevel,
+        refreshAccessProfile,
+        getMemberDepartment: () => accessProfile.department,
+        invokeBudgetAi,
+        // Bentuk lama functions.invoke(nama, { body }) -> endpoint server.
+        invokeBudgetAiRequest: (options = {}) => invokeBudgetAi(options.body),
         isAdmin: () => isAdmin,
         canWriteCloud,
         canWriteData,

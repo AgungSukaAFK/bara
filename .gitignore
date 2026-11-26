@@ -14,3 +14,5 @@ smart-asset-project/data.js
 .DS_Store
 __pycache__/
 supabase/.temp/
+
+node_modules/
