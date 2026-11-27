@@ -76,7 +76,7 @@
     </main>
 
     <script src="js/config.js?v=20261126-lourdes"></script>
-    <script src="js/core.js?v=20261126-lourdes"></script>
+    <script src="js/core.js?v=20261127-budget"></script>
     <script>
         document.addEventListener('DOMContentLoaded', async () => {
             const heading = document.getElementById('authHeading');
@@ -164,8 +164,12 @@
                         showNotice('Password berhasil diperbarui. Anda akan dialihkan ke aplikasi.');
                         setTimeout(() => location.href = 'index.html', 1200);
                     } else {
-                        await SmartBaraCore.login(email, password);
-                        location.href = 'index.html';
+                        const result = await SmartBaraCore.login(email, password);
+                        // Kembali ke Aplikasi Budget bila login dimulai dari sana (gerbang budget-gate.html);
+                        // akun khusus Budget (tanpa akses Smart BARA) juga langsung ke Budget.
+                        let returnTo = '';
+                        try { returnTo = sessionStorage.getItem('smartbara_return_to') || ''; sessionStorage.removeItem('smartbara_return_to'); } catch { /* abaikan */ }
+                        location.href = returnTo.startsWith('/budget-gate.html') ? returnTo : (result?.budgetOnly ? 'budget-gate.html' : 'index.html');
                     }
                 } catch (error) {
                     showNotice(error.message || 'Proses autentikasi gagal. Silakan coba kembali.', true);

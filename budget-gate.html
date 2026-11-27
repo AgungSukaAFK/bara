@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#101a1e">
+    <title>Membuka Aplikasi Budget - Smart BARA</title>
+    <!--
+      Gerbang SSO Aplikasi Budget 2027 (/budget/, container terpisah).
+      Mengambil sesi Supabase Smart BARA, mengirim access token ke /budget/api/auth/sso
+      (server Budget memverifikasi token, role app_access, dan company), lalu membuka Budget.
+      Sengaja TIDAK memuat core.js: core mengarahkan akun khusus-Budget ke halaman ini (hindari loop).
+    -->
+    <link rel="stylesheet" href="css/app.css?v=20261117-hapus-semua">
+    <link rel="stylesheet" href="css/themes.css?v=20261106-themes">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="js/theme.js?v=20261106-themes"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body class="min-h-screen bg-[#f4f3ed] text-slate-900">
+    <main class="sb-palette-fixed flex min-h-screen items-center justify-center px-5 py-10">
+        <div class="w-full max-w-md rounded-xl border border-slate-200 bg-white p-8 shadow-sm">
+            <div class="mb-6 flex items-center gap-3">
+                <div class="flex h-11 w-11 items-center justify-center rounded-xl bg-[#f0c36d] font-black text-[#123b36]">HZ</div>
+                <div>
+                    <p class="m-0 text-sm font-black tracking-wide">SMART BARA</p>
+                    <p class="m-0 text-[10px] font-bold uppercase text-slate-500">Aplikasi Budget 2027</p>
+                </div>
+            </div>
+
+            <div id="gateLoading" class="flex items-center gap-3 text-sm text-slate-700">
+                <span class="h-5 w-5 animate-spin rounded-full border-2 border-teal-700/30 border-t-teal-700" aria-hidden="true"></span>
+                <span id="gateLoadingText">Membuka Aplikasi Budget...</span>
+            </div>
+
+            <div id="gateChooser" class="hidden">
+                <h1 class="m-0 text-2xl font-black">Pilih company</h1>
+                <p class="mt-2 text-sm text-slate-600">Akun Anda dapat membuka Budget untuk kedua company. Data setiap company terpisah.</p>
+                <div id="gateChooserButtons" class="mt-6 grid gap-3"></div>
+            </div>
+
+            <div id="gateError" class="hidden">
+                <h1 class="m-0 text-2xl font-black">Tidak dapat membuka Budget</h1>
+                <div id="gateErrorText" role="alert" class="mt-4 rounded-md border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-800"></div>
+                <div class="mt-6 flex flex-wrap gap-3 text-sm font-bold">
+                    <a id="gateBackToBara" href="index.html" class="hidden rounded-md bg-[#14594f] px-4 py-2.5 text-white hover:bg-[#10473f]">← Kembali ke Smart BARA</a>
+                    <button id="gateRetry" type="button" class="rounded-md border border-slate-300 px-4 py-2.5 text-slate-700 hover:bg-slate-50">Coba lagi</button>
+                    <button id="gateLogout" type="button" class="rounded-md border border-slate-300 px-4 py-2.5 text-slate-700 hover:bg-slate-50">Keluar</button>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script src="js/config.js?v=20261126-lourdes"></script>
+    <script>
+    (async () => {
+        const COMPANY_NAMES = { GMI: 'PT. Garuda Mart Indonesia', GIS: 'PT. Global Inti Sejati' };
+        const BUDGET_BASE = '/budget';
+        const params = new URLSearchParams(location.search);
+        const $ = id => document.getElementById(id);
+
+        // `next` = path di dalam app Budget (boleh dengan/tanpa prefix /budget). Hanya path lokal.
+        function safeNext(raw) {
+            let next = String(raw || '');
+            if (next === BUDGET_BASE || next.startsWith(BUDGET_BASE + '/')) next = next.slice(BUDGET_BASE.length);
+            if (!next.startsWith('/') || next.startsWith('//') || next.includes('\\')) return '/index.html';
+            return next;
+        }
+        const nextPath = safeNext(params.get('next'));
+        const requested = String(params.get('company') || '').toUpperCase();
+
+        function show(id) {
+            for (const el of ['gateLoading', 'gateChooser', 'gateError']) $(el).classList.toggle('hidden', el !== id);
+        }
+        function showError(message, hasBara) {
+            $('gateErrorText').textContent = message;
+            $('gateBackToBara').classList.toggle('hidden', !hasBara);
+            show('gateError');
+        }
+        function storeSet(key, value) {
+            try { localStorage.setItem(key, value); } catch { /* abaikan */ }
+        }
+        function storeGet(key) {
+            try { return localStorage.getItem(key) || ''; } catch { return ''; }
+        }
+
+        const cfg = window.SMART_BARA_CONFIG;
+        const client = window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY, { db: { schema: cfg.DB_SCHEMA || 'smartbara' } });
+
+        async function logoutAll() {
+            try { await fetch(BUDGET_BASE + '/api/auth/logout', { method: 'POST' }); } catch { /* abaikan */ }
+            try { sessionStorage.removeItem('smartbara_budget_companies'); localStorage.removeItem('budget_has_bara'); } catch { /* abaikan */ }
+            await client.auth.signOut();
+            location.replace('login.html');
+        }
+        $('gateLogout').addEventListener('click', logoutAll);
+        $('gateRetry').addEventListener('click', () => location.reload());
+
+        const { data } = await client.auth.getSession();
+        const session = data?.session;
+        if (!session) {
+            // Belum login Smart BARA: login dulu, lalu kembali ke gerbang ini.
+            try { sessionStorage.setItem('smartbara_return_to', location.pathname + location.search); } catch { /* abaikan */ }
+            location.replace('login.html');
+            return;
+        }
+
+        // Tombol "Kembali ke Smart BARA" di Budget hanya untuk akun yang punya akses modul Smart BARA.
+        let hasBara = false;
+        try {
+            const { data: level } = await client.rpc('access_level');
+            hasBara = ['superadmin', 'spv', 'tim', 'viewer'].includes(level);
+        } catch { /* anggap tidak punya akses */ }
+        storeSet('budget_has_bara', hasBara ? '1' : '0');
+
+        async function openBudget(company) {
+            show('gateLoading');
+            $('gateLoadingText').textContent = company ? `Membuka Budget ${company}...` : 'Membuka Aplikasi Budget...';
+            let res;
+            let body = {};
+            try {
+                res = await fetch(BUDGET_BASE + '/api/auth/sso', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ access_token: session.access_token, company: company || '' })
+                });
+                body = await res.json().catch(() => ({}));
+            } catch {
+                showError('Server Aplikasi Budget tidak dapat dihubungi. Coba lagi beberapa saat.', hasBara);
+                return;
+            }
+            if (res.ok && body.ok) {
+                storeSet('budget_last_company', body.user?.company || '');
+                try { sessionStorage.setItem('smartbara_budget_companies', JSON.stringify({ userId: session.user.id, companies: body.companies || [] })); } catch { /* abaikan */ }
+                location.replace(BUDGET_BASE + nextPath);
+                return;
+            }
+            if (res.status === 409 && body.code === 'choose_company') {
+                const companies = (body.companies || []).filter(c => COMPANY_NAMES[c]);
+                const last = storeGet('budget_last_company');
+                // Sesi habis saat di dalam Budget (tanpa pilihan di URL): pakai company terakhir.
+                if (!company && companies.includes(last)) return openBudget(last);
+                $('gateChooserButtons').replaceChildren(...companies.map(code => {
+                    const btn = document.createElement('button');
+                    btn.type = 'button';
+                    btn.className = 'rounded-md border border-slate-300 px-4 py-3 text-left hover:border-teal-700 hover:bg-teal-50';
+                    btn.innerHTML = `<span class="block text-sm font-black"></span><span class="block text-xs text-slate-600"></span>`;
+                    btn.children[0].textContent = `Budget ${code}`;
+                    btn.children[1].textContent = COMPANY_NAMES[code];
+                    btn.addEventListener('click', () => openBudget(code));
+                    return btn;
+                }));
+                show('gateChooser');
+                return;
+            }
+            if (res.status === 401) {
+                // Token Smart BARA tidak diterima (kedaluwarsa/dicabut): login ulang.
+                await logoutAll();
+                return;
+            }
+            showError(body.error || `Gagal membuka Aplikasi Budget (HTTP ${res.status}).`, hasBara);
+        }
+
+        await openBudget(COMPANY_NAMES[requested] ? requested : '');
+    })();
+    </script>
+</body>
+</html>

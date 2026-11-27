@@ -34,6 +34,8 @@ window.SmartBaraLayout = (function() {
         theme: '<circle cx="12" cy="12" r="9"/><path d="M12 3v18"/><path d="M12 8h6.5"/><path d="M12 12h9"/><path d="M12 16h6.5"/>'
     };
 
+    LINE_ICONS['budget-gmi'] = LINE_ICONS['budget-gis'] = LINE_ICONS['kuesioner-budget'];
+
     function themedIcon(emoji, lineIconId) {
         return `<span class="sb-icon-emoji">${emoji}</span><span class="sb-icon-line" aria-hidden="true"><svg viewBox="0 0 24 24">${LINE_ICONS[lineIconId]}</svg></span>`;
     }
@@ -49,7 +51,9 @@ window.SmartBaraLayout = (function() {
         { id: 'budget-analysis', label: 'Analisa Kenaikan Budget', href: 'budget-analysis.html', icon: '📈' },
         { id: 'budget-creator', label: 'Budget Creator Planning', href: 'budget-creator.html', icon: '🛒', highlight: true },
         { id: 'budget-future', label: 'Anggaran Masa Depan', href: 'budget-future.html', icon: '📈' },
-        { id: 'kuesioner-budget', label: 'Kuesioner Budget 2027', href: 'https://budget-2027-ab.vercel.app/', icon: '📝', external: true },
+        // Aplikasi Budget 2027 (container terpisah di /budget/). Tampil sesuai company yang boleh dibuka akun.
+        { id: 'budget-gmi', label: 'Budget 2027 GMI', href: 'budget-gate.html?company=GMI', icon: '📝', budgetCompany: 'GMI' },
+        { id: 'budget-gis', label: 'Budget 2027 GIS', href: 'budget-gate.html?company=GIS', icon: '📝', budgetCompany: 'GIS' },
         { id: 'asset', label: 'Asset Monitoring', href: 'smart-asset-project/index.html', icon: '💎' },
         { id: 'monthly', label: 'Monthly Report', href: 'monthly.html', icon: '📅' },
         { id: 'user-guide', label: 'User Guide', href: 'user-guide.html', icon: '📘' },
@@ -388,12 +392,22 @@ window.SmartBaraLayout = (function() {
         toggle.style.display = isCollapsed && isMobile ? 'flex' : 'none';
     }
 
+    let budgetMenuLoading = false;
     function renderSidebar(activePageId) {
         const sidebar = document.getElementById('appSidebar');
         if (!sidebar) return;
 
         const canManageSettings = window.SmartBaraCore?.canManageSettings?.() || false;
-        const visibleMenuItems = MENU_ITEMS.filter(item => !item.superadminOnly || canManageSettings);
+        const budgetCompanies = window.SmartBaraCore?.getBudgetCompaniesCached?.();
+        if (budgetCompanies == null && window.SmartBaraCore?.getUser?.() && !budgetMenuLoading) {
+            // Belum tahu akses Budget akun ini: cek sekali ke server Budget, lalu gambar ulang menu.
+            budgetMenuLoading = true;
+            window.SmartBaraCore.loadBudgetCompanies()
+                .then(() => renderSidebar(activePageId))
+                .finally(() => { budgetMenuLoading = false; });
+        }
+        const visibleMenuItems = MENU_ITEMS.filter(item => (!item.superadminOnly || canManageSettings)
+            && (!item.budgetCompany || (budgetCompanies || []).includes(item.budgetCompany)));
         const navHtml = visibleMenuItems.map(item => {
             const isActive = item.id === activePageId;
             return `

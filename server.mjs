@@ -3,8 +3,12 @@
 // - /smart-asset[-project]/... : Smart Asset Monitor (api/smart-asset.js).
 // - POST /api/budget-ai        : endpoint AI (server/budget-ai.mts), dulu edge function GOA.
 // - GET  /api/health           : healthcheck Coolify.
-// Env runtime: SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, SUPABASE_SECRET_KEY, PORT (default 3000).
-import { createServer } from 'node:http';
+// - /budget/...                : Aplikasi Budget 2027 (container terpisah), diteruskan ke BUDGET_UPSTREAM
+//                                dengan prefix /budget dipotong. Login lewat budget-gate.html (SSO).
+// Env runtime: SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, SUPABASE_SECRET_KEY, PORT (default 3000),
+//              BUDGET_UPSTREAM (mis. http://<container-budget>:3000).
+import { createServer, request as httpRequest } from 'node:http';
+import { request as httpsRequest } from 'node:https';
 import { createRequire } from 'node:module';
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
@@ -97,6 +101,50 @@ async function readBody(req) {
   return Buffer.concat(chunks);
 }
 
+// ---- Proxy Aplikasi Budget 2027 (/budget/* -> BUDGET_UPSTREAM/*) ----
+// Streaming (tanpa buffer) supaya upload/restore besar dan download Excel/PPT tetap lancar.
+const BUDGET_PREFIX = '/budget';
+const BUDGET_UPSTREAM = String(process.env.BUDGET_UPSTREAM || '').trim().replace(/\/+$/, '');
+const HOP_BY_HOP = new Set(['connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailer', 'transfer-encoding', 'upgrade']);
+
+function proxyToBudget(req, res) {
+  if (!BUDGET_UPSTREAM) return sendJson(res, 503, { error: 'Aplikasi Budget belum dikonfigurasi di server (BUDGET_UPSTREAM).' });
+  const target = new URL(BUDGET_UPSTREAM);
+  const headers = {};
+  for (const [key, value] of Object.entries(req.headers)) {
+    if (!HOP_BY_HOP.has(key.toLowerCase())) headers[key] = value;
+  }
+  headers.host = target.host;
+  headers['x-forwarded-host'] = req.headers['x-forwarded-host'] || req.headers.host || '';
+  headers['x-forwarded-proto'] = req.headers['x-forwarded-proto'] || 'http';
+  headers['x-forwarded-prefix'] = BUDGET_PREFIX;
+  // Host asli BARA untuk cek origin SSO di Budget (header X-Forwarded-* bisa ditimpa Traefik bila upstream lewat domain publik).
+  headers['x-bara-host'] = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim();
+  const upstreamPath = target.pathname.replace(/\/+$/, '') + (req.url.slice(BUDGET_PREFIX.length) || '/');
+  const upstream = (target.protocol === 'https:' ? httpsRequest : httpRequest)({
+    protocol: target.protocol,
+    hostname: target.hostname,
+    port: target.port || undefined,
+    method: req.method,
+    path: upstreamPath,
+    headers
+  }, upstreamRes => {
+    const responseHeaders = {};
+    for (const [key, value] of Object.entries(upstreamRes.headers)) {
+      if (!HOP_BY_HOP.has(key)) responseHeaders[key] = value;
+    }
+    res.writeHead(upstreamRes.statusCode || 502, responseHeaders);
+    upstreamRes.pipe(res);
+  });
+  upstream.on('error', error => {
+    console.error('[budget-proxy]', error.message);
+    if (!res.headersSent) sendJson(res, 502, { error: 'Aplikasi Budget tidak dapat dihubungi. Coba lagi beberapa saat.' });
+    else res.destroy();
+  });
+  req.on('aborted', () => upstream.destroy());
+  req.pipe(upstream);
+}
+
 async function proxyToWebHandler(req, res, handler) {
   const body = await readBody(req);
   const headers = new Headers();
@@ -117,6 +165,12 @@ const server = createServer(async (req, res) => {
   try {
     const { pathname } = new URL(req.url, 'http://internal');
 
+    if (pathname === BUDGET_PREFIX) {
+      // Path relatif di halaman Budget butuh garis miring penutup.
+      const query = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
+      return send(res, 308, '', { Location: `${BUDGET_PREFIX}/${query}` });
+    }
+    if (pathname.startsWith(`${BUDGET_PREFIX}/`)) return proxyToBudget(req, res);
     if (pathname === '/api/health') return sendJson(res, 200, { ok: true });
     if (pathname === '/api/budget-ai') return await proxyToWebHandler(req, res, handleBudgetAi);
     if (pathname.startsWith('/api/')) return sendJson(res, 404, { error: 'Endpoint tidak ditemukan.' });

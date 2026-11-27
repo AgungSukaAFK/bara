@@ -269,11 +269,22 @@ window.SmartBaraCore = (function() {
     async function initAuth() {
         if (!supabaseClient) return;
         try {
+            // Logout yang dimulai dari Aplikasi Budget (/budget/) mendarat di login.html?logout=1.
+            if (isLoginPage() && new URLSearchParams(location.search).get('logout') === '1') {
+                await supabaseClient.auth.signOut();
+                await budgetLogout();
+                history.replaceState(null, '', location.pathname);
+            }
             const { data } = await supabaseClient.auth.getSession();
             if (data?.session) {
                 supabaseSession = data.session;
                 currentUser = data.session.user;
                 const level = await refreshAccessProfile();
+                if (!level && (await loadBudgetCompanies(true)).length) {
+                    // Akun tanpa akses Smart BARA tapi punya akses Aplikasi Budget: langsung ke Budget.
+                    location.replace(new URL('budget-gate.html', location.href).href);
+                    return;
+                }
                 if (!level) {
                     // Sesi ada tapi akun tidak punya akses app smartbara: keluar lokal, kembali ke login.
                     await supabaseClient.auth.signOut({ scope: 'local' });
@@ -526,12 +537,17 @@ window.SmartBaraCore = (function() {
         let level = null;
         let accessError = null;
         try { level = await refreshAccessProfile(); } catch (error) { accessError = error; }
+        if (!level && !accessError && (await loadBudgetCompanies(true)).length) {
+            // Tidak punya akses Smart BARA, tapi punya akses Aplikasi Budget: sesi dipertahankan,
+            // halaman login meneruskan ke budget-gate.html.
+            return { ...data, budgetOnly: true };
+        }
         if (!level) {
             await supabaseClient.auth.signOut({ scope: 'local' });
             supabaseSession = null;
             currentUser = null;
             accessProfile = { userId: null, level: null, department: '' };
-            throw new Error(accessError ? accessError.message : 'Akun ini belum diberi akses Smart BARA. Minta admin memberi akses app Smart BARA di konsol pengguna Lourdes.');
+            throw new Error(accessError ? accessError.message : 'Akun ini belum diberi akses Smart BARA maupun Aplikasi Budget. Minta admin memberi akses di konsol pengguna Lourdes.');
         }
         checkUserRole();
         const preferredPeriod = sanitizePeriodName(localStorage.getItem('smartbara_active_period') || savedPeriodRegistry.activePeriod) || getDefaultPeriod();
@@ -543,6 +559,56 @@ window.SmartBaraCore = (function() {
         applySessionDefaults();
         dispatchCoreEvent('auth_change', { user: currentUser, isAdmin });
         return data;
+    }
+
+    // ---- Aplikasi Budget 2027 (disajikan di /budget/, container terpisah, SSO dari sesi ini) ----
+    // Company Budget yang boleh dibuka akun ini (GMI/GIS: satu; LOURDES: GMI & GIS), dicek ke server Budget.
+    const BUDGET_COMPANIES_KEY = 'smartbara_budget_companies';
+    function isLoginPage() {
+        return window.location.pathname.endsWith('/login.html');
+    }
+    function getBudgetCompaniesCached() {
+        try {
+            const cached = JSON.parse(sessionStorage.getItem(BUDGET_COMPANIES_KEY) || 'null');
+            return cached && currentUser && cached.userId === currentUser.id ? cached.companies : null;
+        } catch {
+            return null;
+        }
+    }
+    async function loadBudgetCompanies(force = false) {
+        if (!supabaseClient || !currentUser) return [];
+        if (!force) {
+            const cached = getBudgetCompaniesCached();
+            if (cached) return cached;
+        }
+        let companies = [];
+        try {
+            const { data } = await supabaseClient.auth.getSession();
+            const token = data?.session?.access_token;
+            if (token) {
+                const res = await fetch('/budget/api/auth/sso', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ access_token: token, check_only: true })
+                });
+                const body = await res.json().catch(() => ({}));
+                companies = Array.isArray(body.companies) ? body.companies.filter(c => c === 'GMI' || c === 'GIS') : [];
+            }
+        } catch (error) {
+            console.warn('Gagal memeriksa akses Aplikasi Budget:', error);
+            return [];
+        }
+        try {
+            sessionStorage.setItem(BUDGET_COMPANIES_KEY, JSON.stringify({ userId: currentUser.id, companies }));
+        } catch { /* storage penuh/terkunci: abaikan */ }
+        return companies;
+    }
+    async function budgetLogout() {
+        try { sessionStorage.removeItem(BUDGET_COMPANIES_KEY); } catch { /* abaikan */ }
+        try { localStorage.removeItem('budget_has_bara'); } catch { /* abaikan */ }
+        try {
+            await fetch('/budget/api/auth/logout', { method: 'POST' });
+        } catch { /* server Budget tidak terjangkau: cookie tetap berakhir sendiri */ }
     }
 
     async function verifyCurrentPassword(password) {
@@ -578,6 +644,7 @@ window.SmartBaraCore = (function() {
         if (supabaseClient) {
             await supabaseClient.auth.signOut();
         }
+        await budgetLogout();
         supabaseSession = null;
         currentUser = null;
         isAdmin = false;
@@ -1954,6 +2021,8 @@ window.SmartBaraCore = (function() {
         requestPasswordReset,
         updatePassword,
         logout,
+        loadBudgetCompanies,
+        getBudgetCompaniesCached,
         getUser: () => currentUser,
         getAccessLevel,
         refreshAccessProfile,

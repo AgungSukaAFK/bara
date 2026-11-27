@@ -3,6 +3,7 @@
 # Standar: ~/project/lourdes-db/docs/standar-app.md §10.
 # Env runtime saja (JANGAN centang "Available at Buildtime"):
 #   SUPABASE_URL=https://db.lourdes.cloud, SUPABASE_PUBLISHABLE_KEY, SUPABASE_SECRET_KEY
+#   BUDGET_UPSTREAM=<URL container Aplikasi Budget 2027>, mis. http://<nama-container>:3000 (proxy /budget/*)
 
 # Node >= 23.6 diperlukan untuk menjalankan server/budget-ai.mts (type stripping).
 FROM node:24-alpine
