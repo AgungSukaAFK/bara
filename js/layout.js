@@ -49,7 +49,7 @@ window.SmartBaraLayout = (function() {
         { id: 'budget-plan', label: 'Budget Plan Akun', href: 'budget-plan.html', icon: '💰' },
         { id: 'account-alignment', label: 'Penyelarasan Nama Akun', href: 'account-alignment.html', icon: '🔎' },
         { id: 'budget-analysis', label: 'Analisa Kenaikan Budget', href: 'budget-analysis.html', icon: '📈' },
-        { id: 'budget-creator', label: 'Budget Creator Planning', href: 'budget-creator.html', icon: '🛒', highlight: true },
+        { id: 'budget-creator', label: 'Budget Creator Planning', href: 'budget-creator.html', icon: '🛒', highlight: true, hidden: true },
         { id: 'budget-future', label: 'Anggaran Masa Depan', href: 'budget-future.html', icon: '📈' },
         // Aplikasi Budget 2027 (container terpisah di /budget/). Tampil sesuai company yang boleh dibuka akun.
         { id: 'budget-gmi', label: 'Budget 2027 GMI', href: 'budget-gate.html?company=GMI', icon: '📝', budgetCompany: 'GMI' },
@@ -406,7 +406,7 @@ window.SmartBaraLayout = (function() {
                 .then(() => renderSidebar(activePageId))
                 .finally(() => { budgetMenuLoading = false; });
         }
-        const visibleMenuItems = MENU_ITEMS.filter(item => (!item.superadminOnly || canManageSettings)
+        const visibleMenuItems = MENU_ITEMS.filter(item => !item.hidden && (!item.superadminOnly || canManageSettings)
             && (!item.budgetCompany || (budgetCompanies || []).includes(item.budgetCompany)));
         const navHtml = visibleMenuItems.map(item => {
             const isActive = item.id === activePageId;
