@@ -34,6 +34,7 @@ window.DashboardModule = (function() {
         cards.forEach(card => {
             card.addEventListener('click', (event) => {
                 if (event.target.closest('button')) return;
+                if (card.dataset.navigate === 'true') return; // card tautan langsung (mis. Budget 2027 Departemen)
                 event.preventDefault();
                 showMetricDetail(card.dataset.metric);
             });
@@ -184,7 +185,7 @@ window.DashboardModule = (function() {
         const financeTotal = safeParseNumber(document.getElementById('dashFinanceTotal')?.textContent || '0');
         const reconcileTotal = safeParseNumber(document.getElementById('dashReconcileTotal')?.textContent || '0');
         const futureBudget = safeParseNumber(document.getElementById('dashFutureBudgetTotal')?.textContent || '0');
-        const creatorTotal = safeParseNumber(document.getElementById('dashCreatorTotal')?.textContent || '0');
+        const budgetDeptTotal = safeParseNumber(document.getElementById('dashBudgetDeptTotal')?.textContent || '0');
         const varianceTotal = safeParseNumber(document.getElementById('dashSelisihTotal')?.textContent || '0');
         const approvalStatus = document.getElementById('dashApprovalStatus')?.textContent || 'Belum disetujui';
         const approvalBadge = document.getElementById('dashApprovalBadge')?.textContent || 'Pending';
@@ -206,7 +207,7 @@ window.DashboardModule = (function() {
             financeTotal,
             reconcileTotal,
             futureBudget,
-            creatorTotal,
+            budgetDeptTotal,
             varianceTotal,
             planGrowth,
             approvalStatus,
@@ -2195,7 +2196,6 @@ window.DashboardModule = (function() {
         const futureBudget = parseCurrencyText(document.getElementById('dashFutureBudgetTotal')?.textContent || '0');
         const reconcileTotal = parseCurrencyText(document.getElementById('dashReconcileTotal')?.textContent || '0');
         const financeTotal = parseCurrencyText(document.getElementById('dashFinanceTotal')?.textContent || '0');
-        const creatorTotal = parseCurrencyText(document.getElementById('dashCreatorTotal')?.textContent || '0');
         const deltaFuture = futureBudget - budgetPlan;
         const deltaFuturePct = budgetPlan ? (Math.abs(deltaFuture) / budgetPlan) * 100 : 0;
         const forecast = reconcileTotal > 0 ? (reconcileTotal / monthsPassed) * 12 : 0;
@@ -2340,15 +2340,6 @@ window.DashboardModule = (function() {
                     `Rumus: |Finance - Rekonsiliasi|`,
                     `Arah: ${financeTotal >= reconcileTotal ? 'positif / surplus' : 'negatif / defisit'}`,
                     `Tujuan: memetakan gap antara data finance dan hasil rekonsiliasi.`
-                ]
-            },
-            'creator': {
-                title: 'Detail Budget Creator Planning',
-                lines: [
-                    `Periode aktif: ${activePeriod}`,
-                    `Total kebutuhan: ${window.Formatters.formatRupiah(creatorTotal)}`,
-                    `Rumus: Σ(quantity × estimated_unit_price)`,
-                    `Pembacaan: total nilai kebutuhan dari seluruh rencana anggaran yang dibuat di Budget Creator.`
                 ]
             },
             'prediction': {
@@ -2560,6 +2551,58 @@ window.DashboardModule = (function() {
         await loadDashboardMetrics();
     }
 
+    // Card "Budget 2027 Departemen": total pengajuan dari web Budget, disaring dept aktif BARA.
+    let budgetDeptCardSeq = 0;
+    async function refreshBudgetDeptCard(selectedDepts, isCombinedScope) {
+        const card = document.getElementById('dashBudgetDeptCard');
+        if (!card || !window.SmartBaraCore.loadBudgetDeptTotals) return;
+        const seq = ++budgetDeptCardSeq;
+        const totalEl = document.getElementById('dashBudgetDeptTotal');
+        const scopeEl = document.getElementById('dashBudgetDeptScope');
+        const breakdownEl = document.getElementById('dashBudgetDeptBreakdown');
+        const escapeText = value => String(value ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+        const row = (label, value) => `<div class="flex items-center justify-between gap-2"><span class="text-xs text-slate-400 truncate">${escapeText(label)}</span><span class="text-sm font-bold text-white tabular-nums whitespace-nowrap">${escapeText(value)}</span></div>`;
+
+        const deptList = [...selectedDepts];
+        const scopeLabel = isCombinedScope || !deptList.length ? 'Semua departemen' : deptList.join(', ');
+        if (scopeEl) {
+            scopeEl.textContent = `Total pengajuan · ${scopeLabel}`;
+            scopeEl.title = scopeLabel;
+        }
+        if (totalEl && !totalEl.dataset.loaded) totalEl.textContent = 'Memuat...';
+
+        const result = await window.SmartBaraCore.loadBudgetDeptTotals();
+        if (seq !== budgetDeptCardSeq) return; // sudah ada permintaan yang lebih baru (dept berganti)
+
+        const companies = Array.isArray(result?.companies) ? result.companies : [];
+        if (!companies.length) {
+            if (totalEl) { totalEl.textContent = result?.noAccess ? 'Tidak ada akses' : 'Tidak tersedia'; delete totalEl.dataset.loaded; }
+            if (breakdownEl) breakdownEl.innerHTML = row('Keterangan', result?.error ? 'Web Budget' : '-') +
+                (result?.error ? `<p class="text-[11px] text-slate-500 m-0">${escapeText(result.error)}</p>` : '');
+            card.setAttribute('href', 'budget-gate.html');
+            return;
+        }
+
+        const matches = dept => isCombinedScope || selectedDepts.size === 0
+            || selectedDepts.has(String(dept.departemen || '').toUpperCase())
+            || selectedDepts.has(String(dept.efektif || '').toUpperCase());
+        let grandTotal = 0;
+        const perCompany = companies.map(company => {
+            const rows = (company.by_dept || []).filter(matches);
+            const total = rows.reduce((sum, item) => sum + (Number(item.total) || 0), 0);
+            grandTotal += total;
+            return { code: company.company, total, deptCount: rows.filter(item => Number(item.total) > 0).length };
+        });
+
+        if (totalEl) { totalEl.textContent = window.Formatters.formatRupiah(grandTotal); totalEl.dataset.loaded = '1'; }
+        if (breakdownEl) {
+            breakdownEl.innerHTML = perCompany.length > 1
+                ? perCompany.map(item => row(item.code, window.Formatters.formatRupiah(item.total))).join('')
+                : row(`Company ${perCompany[0].code}`, `${perCompany[0].deptCount.toLocaleString('id-ID')} dept terisi`);
+        }
+        card.setAttribute('href', `budget-gate.html?company=${encodeURIComponent(perCompany[0].code)}`);
+    }
+
     function loadDashboardMetrics(silent = false) {
         if (dashboardMetricsPromise) {
             dashboardMetricsRefreshRequested = true;
@@ -2587,11 +2630,9 @@ window.DashboardModule = (function() {
         let storeData = [];
         let metaData = [];
         let budgetData = [];
-        let creatorData = [];
         let futureBudgetData = [];
 
         try {
-            creatorData = JSON.parse(localStorage.getItem(`budget_creator_planning_${period}`) || '[]');
             budgetData = JSON.parse(localStorage.getItem(`smartbara_budget_v2_${period}`) || '[]');
             futureBudgetData = JSON.parse(localStorage.getItem(`smartbara_budget_future_v1_${period}`) || '[]');
             metaData = JSON.parse(localStorage.getItem(`smartbara_meta_${period}`) || '{}');
@@ -2607,7 +2648,7 @@ window.DashboardModule = (function() {
         const isCombinedScope = window.SmartBaraCore.isCombinedDepartments();
         const matchesDept = dept => isCombinedScope || selectedDepts.size === 0 || selectedDepts.has(String(dept || '').toUpperCase());
         budgetData = budgetData.filter(item => matchesDept(item.dept));
-        creatorData = creatorData.filter(item => matchesDept(item.department));
+        refreshBudgetDeptCard(selectedDepts, isCombinedScope);
         futureBudgetData = futureBudgetData.filter(item => matchesDept(item.dept || item.department));
         window.__smartbaraBudgetRows = budgetData;
         window.__smartbaraFutureBudgetRows = futureBudgetData;
@@ -2618,7 +2659,6 @@ window.DashboardModule = (function() {
                 : monthKeys.map(month => item.budget?.[month] ?? item[`budget_${month}`] ?? item[month]);
             return sum + values.reduce((subtotal, value) => subtotal + (Number(value) || 0), 0);
         }, 0);
-        const sumCreator = rows => rows.reduce((sum, item) => sum + (Number(item.quantity) || 0) * (Number(item.estimated_unit_price) || 0), 0);
         const sumFuture = rows => rows.reduce((sum, item) => {
             const total = Number(item.total);
             if (Number.isFinite(total)) return sum + total;
@@ -2653,8 +2693,6 @@ window.DashboardModule = (function() {
         );
 
         renderStats({
-            creatorCount: countUniqueAccounts(creatorData),
-            creatorTotal: sumCreator(creatorData),
             budgetCount: countUniqueAccounts(budgetData),
             budgetTotal: sumBudget(budgetData),
             futureBudgetCount: countUniqueAccounts(futureBudgetData),
@@ -2669,15 +2707,13 @@ window.DashboardModule = (function() {
         if (!client) return;
 
         try {
-            const [metaRes, budgetRes, creatorRes, futureBudgetRes, overrideRes] = await Promise.all([
+            const [metaRes, budgetRes, futureBudgetRes, overrideRes] = await Promise.all([
                 client.from('smartbara_meta').select('*').eq('period_name', period),
                 window.SmartBaraCore.fetchPeriodRows('smartbara_budget', period),
-                window.SmartBaraCore.fetchPeriodRows('smartbara_budget_creator_planning', period, { columns: 'department, quantity, estimated_unit_price' }),
                 client.from('smartbara_future_budget').select('rows_data').eq('period_name', period).maybeSingle(),
                 client.from('smartbara_settings').select('key, value').like('key', `smartbara_reconcile_override_${period}_%`)
             ]);
 
-            const cData = (creatorRes.data?.length ? creatorRes.data : creatorData).filter(item => matchesDept(item.department));
             const bData = (budgetRes.data?.length ? budgetRes.data : budgetData).filter(item => matchesDept(item.dept || item.departemen));
             const futureRows = Array.isArray(futureBudgetRes.data?.rows_data) ? futureBudgetRes.data.rows_data : futureBudgetData;
             const fData = futureRows.filter(item => matchesDept(item.dept || item.department));
@@ -2694,8 +2730,6 @@ window.DashboardModule = (function() {
             const { financeTotal, reconcileTotal } = calculateFinanceTotals(transactionRows, mData);
 
             renderStats({
-                creatorCount: countUniqueAccounts(cData),
-                creatorTotal: sumCreator(cData),
                 budgetCount: countUniqueAccounts(bData),
                 budgetTotal: sumBudget(bData),
                 futureBudgetCount: countUniqueAccounts(fData),
@@ -3120,8 +3154,6 @@ window.DashboardModule = (function() {
         const transactionRows = getYearScopedTransactions();
         const health = computeDataHealth(transactionRows);
 
-        setEl('dashCreatorCount', (metrics.creatorCount || 0).toLocaleString('id-ID'));
-        setEl('dashCreatorTotal', window.Formatters.formatRupiah(metrics.creatorTotal || 0));
         setEl('dashBudgetCount', (metrics.budgetCount || 0).toLocaleString('id-ID'));
         setEl('dashBudgetTotal', window.Formatters.formatRupiah(budgetValue));
         setEl('dashPredictionCount', (metrics.budgetCount || 0).toLocaleString('id-ID'));
@@ -3138,7 +3170,7 @@ window.DashboardModule = (function() {
         setEl('dashPlanGrowthPercent', hasFutureBudget ? `${deltaFuturePct.toFixed(1)}%` : '—');
         setEl('dashPlanGrowthTrend', hasFutureBudget ? `${deltaFuture >= 0 ? 'naik' : 'turun'}` : futureBudgetEmptyLabel);
 
-        const hasData = (health.transactions > 0) || (metrics.budgetCount > 0) || (metrics.creatorCount > 0) || (metrics.futureBudgetCount > 0) || (Object.keys(window.SmartBaraCore.getDepartments()).length > 0);
+        const hasData = (health.transactions > 0) || (metrics.budgetCount > 0) || (metrics.futureBudgetCount > 0) || (Object.keys(window.SmartBaraCore.getDepartments()).length > 0);
 
         setEl('dashHealthScore', `${health.score}`);
         setEl('dashHealthState', hasData ? health.label : 'Data Kosong');

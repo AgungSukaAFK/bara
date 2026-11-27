@@ -226,18 +226,20 @@
                     </div>
                 </a>
 
-                <a href="budget-creator.html" data-metric="creator" class="metric-card glass-card rounded-2xl p-5 border border-white/10 flex flex-col justify-between block no-underline text-inherit transition hover:border-teal-500/60 cursor-pointer">
+                <a href="budget-gate.html" id="dashBudgetDeptCard" data-metric="budget-dept" data-navigate="true" class="metric-card glass-card rounded-2xl p-5 border border-white/10 flex flex-col justify-between block no-underline text-inherit transition hover:border-teal-500/60 cursor-pointer">
                     <div>
                         <div class="flex items-center justify-between">
-                            <span class="text-xs font-bold text-slate-400 uppercase tracking-wider">Budget Creator Planning</span>
-                            <span class="text-base">🛒</span>
+                            <span class="text-xs font-bold text-slate-400 uppercase tracking-wider">Budget 2027 Departemen</span>
+                            <span class="text-base">📝</span>
                         </div>
-                        <p class="text-[10px] font-bold text-slate-400 uppercase mt-3 mb-0">Total Nilai Kebutuhan</p>
-                        <p class="text-xl font-black text-teal-400 mt-1 mb-0 stat-value tabular-nums break-words" id="dashCreatorTotal">Memuat...</p>
+                        <p class="text-[10px] font-bold text-slate-400 uppercase mt-3 mb-0 truncate" id="dashBudgetDeptScope" title="">Total pengajuan</p>
+                        <p class="text-xl font-black text-teal-400 mt-1 mb-0 stat-value tabular-nums break-words" id="dashBudgetDeptTotal">Memuat...</p>
                     </div>
-                    <div class="mt-4 pt-3 border-t border-white/10 flex items-center justify-between">
-                        <span class="text-xs text-slate-400">Total akun</span>
-                        <span class="text-sm font-bold text-white tabular-nums" id="dashCreatorCount">...</span>
+                    <div class="mt-4 pt-3 border-t border-white/10 flex flex-col gap-1" id="dashBudgetDeptBreakdown">
+                        <div class="flex items-center justify-between">
+                            <span class="text-xs text-slate-400">Sumber</span>
+                            <span class="text-sm font-bold text-white">Web Budget</span>
+                        </div>
                     </div>
                 </a>
 
@@ -441,11 +443,11 @@
     <!-- Scripts: Load order matters (config → formatters → core → modules → layout → page) -->
     <script src="js/config.js?v=20261126-lourdes"></script>
     <script src="js/utils/formatters.js?v=20261101-final-complete-approval"></script>
-    <script src="js/core.js?v=20261127-budget2"></script>
+    <script src="js/core.js?v=20261127-budgetdept"></script>
     <script src="js/modules/upload.js?v=20261117-hapus-semua"></script>
     <script src="js/layout.js?v=20261127-hidecreator"></script>
     <script src="js/modules/ai-settings.js?v=20261126-lourdes"></script>
-    <script src="js/modules/dashboard.js?v=20261126-lourdes"></script>
+    <script src="js/modules/dashboard.js?v=20261127-budgetdept"></script>
     <script src="js/modules/rekonsil.js?v=20261117-hapus-semua"></script>
     <script src="js/modules/budget.js?v=20261117-hapus-semua"></script>
     <script>

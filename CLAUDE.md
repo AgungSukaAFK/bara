@@ -25,3 +25,6 @@ App ini memakai Supabase Lourdes (db.lourdes.cloud). app_id / schema = `smartbar
   Akun GMI/GIS terkunci ke company-nya; akun profil LOURDES boleh memilih dan berpindah GMI/GIS.
 - Akun tanpa akses smartbara tapi punya akses budget tetap bisa login dan langsung diarahkan ke `/budget/`.
 - Logout dua arah: logout BARA memanggil `/budget/api/auth/logout`; logout Budget ke `login.html?logout=1`.
+- Card Dashboard "Budget 2027 Departemen" (pengganti card Budget Creator, menu Budget Creator disembunyikan):
+  `core.loadBudgetDeptTotals()` → `POST /budget/api/bara/dept-totals` (endpoint read-only di repo AB, verifikasi token
+  BARA seperti SSO, tanpa membuat sesi). LOURDES = GMI+GIS dijumlah; disaring dept aktif BARA (nama asli atau alias dept Budget).

@@ -575,6 +575,47 @@ window.SmartBaraCore = (function() {
             return null;
         }
     }
+    // Total pengajuan Budget 2027 per departemen dari web Budget (/budget/api/bara/dept-totals).
+    // Akun LOURDES mendapat GMI dan GIS; akun GMI/GIS hanya company-nya. Cache singkat per tab.
+    const BUDGET_DEPT_TOTALS_KEY = 'smartbara_budget_dept_totals';
+    const BUDGET_DEPT_TOTALS_TTL_MS = 60 * 1000;
+    let budgetDeptTotalsInFlight = null;
+    async function loadBudgetDeptTotals(force = false) {
+        if (!supabaseClient || !currentUser) return { companies: [], error: 'Belum login.' };
+        const userId = currentUser.id;
+        if (!force) {
+            try {
+                const cached = JSON.parse(sessionStorage.getItem(BUDGET_DEPT_TOTALS_KEY) || 'null');
+                if (cached && cached.userId === userId && Date.now() - cached.at < BUDGET_DEPT_TOTALS_TTL_MS) return cached.data;
+            } catch { /* cache rusak: muat ulang */ }
+        }
+        if (budgetDeptTotalsInFlight) return budgetDeptTotalsInFlight;
+        budgetDeptTotalsInFlight = (async () => {
+            const { data } = await supabaseClient.auth.getSession();
+            const token = data?.session?.access_token;
+            if (!token) return { companies: [], error: 'Sesi login tidak ditemukan.' };
+            const res = await fetch('/budget/api/bara/dept-totals', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ access_token: token })
+            });
+            const body = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                // 401/403 = memang tidak punya akses Budget; selain itu gangguan server (tidak di-cache).
+                return { companies: [], error: body.error || `Web Budget tidak tersedia (${res.status}).`, noAccess: res.status === 401 || res.status === 403 };
+            }
+            const result = { companies: Array.isArray(body.companies) ? body.companies : [], generatedAt: body.generated_at || '' };
+            try {
+                sessionStorage.setItem(BUDGET_DEPT_TOTALS_KEY, JSON.stringify({ userId, at: Date.now(), data: result }));
+            } catch { /* storage penuh/terkunci: abaikan */ }
+            return result;
+        })().catch(error => {
+            console.warn('Gagal memuat budget departemen dari web Budget:', error);
+            return { companies: [], error: 'Gagal terhubung ke web Budget.' };
+        }).finally(() => { budgetDeptTotalsInFlight = null; });
+        return budgetDeptTotalsInFlight;
+    }
+
     async function loadBudgetCompanies(force = false) {
         if (!supabaseClient || !currentUser) return [];
         if (!force) {
@@ -2027,6 +2068,7 @@ window.SmartBaraCore = (function() {
         updatePassword,
         logout,
         loadBudgetCompanies,
+        loadBudgetDeptTotals,
         getBudgetCompaniesCached,
         getUser: () => currentUser,
         getAccessLevel,
