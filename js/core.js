@@ -591,8 +591,13 @@ window.SmartBaraCore = (function() {
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ access_token: token, check_only: true })
                 });
+                // Hanya jawaban sukses yang disimpan: 5xx/proxy belum siap tidak boleh tercatat sebagai
+                // "tidak punya akses" sepanjang sesi tab.
+                if (!res.ok) return [];
                 const body = await res.json().catch(() => ({}));
                 companies = Array.isArray(body.companies) ? body.companies.filter(c => c === 'GMI' || c === 'GIS') : [];
+            } else {
+                return [];
             }
         } catch (error) {
             console.warn('Gagal memeriksa akses Aplikasi Budget:', error);
